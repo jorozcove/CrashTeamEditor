@@ -1674,6 +1674,8 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 		pointerMap.push_back(static_cast<uint32_t>(offset));
 	}
 
+	#undef CALCULATE_OFFSET
+
 	const size_t pointerMapBytes = pointerMap.size() * sizeof(uint32_t);
 
 	Write(file, &offPointerMap, sizeof(uint32_t));

@@ -156,6 +156,9 @@
     <ClCompile Include="src\simple_level_instances.cpp">
       <Filter>Renderer</Filter>
     </ClCompile>
+    <ClCompile Include="src\levdataextractor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\app.h">
@@ -250,6 +253,9 @@
     </ClInclude>
     <ClInclude Include="src\simple_level_instances.h">
       <Filter>Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\levdataextractor.h">
+      <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
