@@ -529,6 +529,7 @@ void init_crashteameditor(py::module_& m)
 			return nodes;
 		})
 		.def("set_quadblock_indexes", &BSP::SetQuadblockIndexes)
+		.def("split_leaf", &BSP::SplitLeaf, py::arg("quadblocks"), py::arg("axis"), py::arg("midpoint"))
 		.def("clear", &BSP::Clear)
 		.def("generate", &BSP::Generate, py::arg("quadblocks"), py::arg("max_quads_per_leaf"), py::arg("max_axis_length"));
 

@@ -256,6 +256,56 @@ void BSP::Clear()
 	g_id = 1;
 }
 
+void BSP::SplitLeaf(const std::vector<Quadblock>& quadblocks, const AxisSplit axis, const float midpoint)
+{
+	// Split a leaf using axis and midpoint.
+	// Do nothing if it's a branch, or the midpoint doesn't split into 2 non empty leaves.
+	if (IsBranch()) { return; } 
+
+	std::vector<size_t> left_quad_indexes;
+	std::vector<size_t> right_quad_indexes;
+	for (size_t quad_index : m_quadblockIndexes)
+	{
+		const Quadblock& quad = quadblocks[quad_index];
+		float centerValue = 0.0f;
+		switch (axis)
+		{
+		case AxisSplit::X:
+			centerValue = quad.GetCenter().x;
+			break;
+		case AxisSplit::Y:
+			centerValue = quad.GetCenter().y;
+			break;
+		case AxisSplit::Z:
+			centerValue = quad.GetCenter().z;
+			break;
+		default:
+			return; // Invalid axis
+		}
+
+		if (centerValue >= midpoint)
+		{
+			left_quad_indexes.push_back(quad_index);
+		}
+		else
+		{
+			right_quad_indexes.push_back(quad_index);
+		}
+	}
+
+	if (left_quad_indexes.empty() || right_quad_indexes.empty()) { return;}
+
+	m_node = BSPNode::BRANCH;
+	m_flags &= ~BSPFlags::LEAF;
+	m_axis = axis;
+
+	m_left = new BSP(BSPNode::LEAF, left_quad_indexes, this, quadblocks);
+	m_left->m_bbox = ComputeBoundingBox(quadblocks, left_quad_indexes);
+	
+	m_right = new BSP(BSPNode::LEAF, right_quad_indexes, this, quadblocks);
+	m_right->m_bbox = ComputeBoundingBox(quadblocks, right_quad_indexes);
+}
+
 void BSP::Generate(const std::vector<Quadblock>& quadblocks, const size_t maxQuadsPerLeaf, const float maxAxisLength)
 {
 	m_bbox = ComputeBoundingBox(quadblocks, m_quadblockIndexes);
