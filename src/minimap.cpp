@@ -1,6 +1,7 @@
 #include "minimap.h"
 #include "quadblock.h"
 
+#include <stb_image.h>
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
 #include <portable-file-dialogs.h>
@@ -71,16 +72,70 @@ void MinimapConfig::Deserialize(const PSX::Map& map)
 
 void MinimapConfig::LoadTextures()
 {
-	if (!topTexturePath.empty() && std::filesystem::exists(topTexturePath))
+	if (sourceTexturePath.empty() || !std::filesystem::exists(sourceTexturePath))
 	{
-		topTexture = Texture(topTexturePath);
-		hasTopTexture = !topTexture.IsEmpty();
+		return;
 	}
-	if (!bottomTexturePath.empty() && std::filesystem::exists(bottomTexturePath))
+
+	// Load the source image using stb_image
+	int width, height, channels;
+	unsigned char* sourceImage = stbi_load(sourceTexturePath.string().c_str(), &width, &height, &channels, 4); // Force RGBA
+	if (sourceImage == nullptr)
 	{
-		bottomTexture = Texture(bottomTexturePath);
-		hasBottomTexture = !bottomTexture.IsEmpty();
+		return;
 	}
+
+	// Image should be twice the height (top + bottom halves)
+	if (height % 2 != 0)
+	{
+		stbi_image_free(sourceImage);
+		return; // Height must be even for splitting
+	}
+
+	int halfHeight = height / 2;
+	
+	// Calculate stretched dimensions (1.5x width)
+	int stretchedWidth = static_cast<int>(width * 1.5f);
+
+	// Create buffers for stretched top and bottom halves
+	std::vector<unsigned char> topPixels(stretchedWidth * halfHeight * 4);
+	std::vector<unsigned char> bottomPixels(stretchedWidth * halfHeight * 4);
+
+	// Stretch and split the image using nearest-neighbor sampling
+	for (int y = 0; y < halfHeight; y++)
+	{
+		for (int x = 0; x < stretchedWidth; x++)
+		{
+			// Map stretched x coordinate back to source x coordinate
+			int srcX = static_cast<int>(x / 1.5f);
+			if (srcX >= width) srcX = width - 1;
+
+			// Top half
+			int srcTopIdx = (y * width + srcX) * 4;
+			int dstTopIdx = (y * stretchedWidth + x) * 4;
+			topPixels[dstTopIdx + 0] = sourceImage[srcTopIdx + 0];
+			topPixels[dstTopIdx + 1] = sourceImage[srcTopIdx + 1];
+			topPixels[dstTopIdx + 2] = sourceImage[srcTopIdx + 2];
+			topPixels[dstTopIdx + 3] = sourceImage[srcTopIdx + 3];
+
+			// Bottom half
+			int srcBottomIdx = ((y + halfHeight) * width + srcX) * 4;
+			int dstBottomIdx = (y * stretchedWidth + x) * 4;
+			bottomPixels[dstBottomIdx + 0] = sourceImage[srcBottomIdx + 0];
+			bottomPixels[dstBottomIdx + 1] = sourceImage[srcBottomIdx + 1];
+			bottomPixels[dstBottomIdx + 2] = sourceImage[srcBottomIdx + 2];
+			bottomPixels[dstBottomIdx + 3] = sourceImage[srcBottomIdx + 3];
+		}
+	}
+
+	stbi_image_free(sourceImage);
+
+	// Create textures from the stretched and split pixel data
+	topTexture = Texture::CreateFromPixelData(topPixels.data(), stretchedWidth, halfHeight);
+	bottomTexture = Texture::CreateFromPixelData(bottomPixels.data(), stretchedWidth, halfHeight);
+
+	hasTopTexture = !topTexture.IsEmpty();
+	hasBottomTexture = !bottomTexture.IsEmpty();
 }
 
 bool MinimapConfig::IsReady() const
@@ -108,8 +163,7 @@ void MinimapConfig::Clear()
 	driverDotStartY = 180;
 	orientationMode = 0;
 	unk = 0;
-	topTexturePath.clear();
-	bottomTexturePath.clear();
+	sourceTexturePath.clear();
 	topTexture = Texture();
 	bottomTexture = Texture();
 	hasTopTexture = false;
@@ -191,59 +245,33 @@ bool MinimapConfig::RenderUI(const std::vector<Quadblock>& quadblocks)
 	ImGui::SetItemTooltip("???");
 
 	ImGui::Separator();
-	ImGui::Text("Textures (both halves must have the same dimensions):");
-
-	// Top texture selection
-	std::string topPath = topTexturePath.empty() ? "(none)" : topTexturePath.filename().string();
-	ImGui::Text("Top:"); ImGui::SameLine();
-	ImGui::SetNextItemWidth(200.0f);
+	ImGui::Text("Minimap Texture:");
+	
+	// Single texture selection
+	std::string sourcePath = sourceTexturePath.empty() ? "(none)" : sourceTexturePath.filename().string();
+	ImGui::Text("Image:"); ImGui::SameLine();
+	ImGui::SetNextItemWidth(250.0f);
 	ImGui::BeginDisabled();
-	ImGui::InputText("##toptex", &topPath, ImGuiInputTextFlags_ReadOnly);
+	ImGui::InputText("##sourcetex", &sourcePath, ImGuiInputTextFlags_ReadOnly);
 	ImGui::EndDisabled();
 	ImGui::SameLine();
-	if (ImGui::Button("Browse##selecttop"))
+	if (ImGui::Button("Browse##selectsource"))
 	{
-		auto selection = pfd::open_file("Select Top Minimap Texture", ".",
+		auto selection = pfd::open_file("Select Minimap Texture (will be split into top/bottom)", ".",
 			{"Image Files", "*.png *.bmp *.jpg *.jpeg", "All Files", "*"}).result();
 		if (!selection.empty())
 		{
-			topTexturePath = selection.front();
-			topTexture = Texture(topTexturePath);
-			hasTopTexture = !topTexture.IsEmpty();
+			sourceTexturePath = selection.front();
+			LoadTextures(); // Process the image immediately
 		}
 	}
 	ImGui::SameLine();
-	if (ImGui::Button("Clear##cleartop"))
+	if (ImGui::Button("Clear##clearsource"))
 	{
-		topTexturePath.clear();
+		sourceTexturePath.clear();
 		topTexture = Texture();
-		hasTopTexture = false;
-	}
-
-	// Bottom texture selection
-	std::string bottomPath = bottomTexturePath.empty() ? "(none)" : bottomTexturePath.filename().string();
-	ImGui::Text("Bottom:"); ImGui::SameLine();
-	ImGui::SetNextItemWidth(200.0f);
-	ImGui::BeginDisabled();
-	ImGui::InputText("##bottomtex", &bottomPath, ImGuiInputTextFlags_ReadOnly);
-	ImGui::EndDisabled();
-	ImGui::SameLine();
-	if (ImGui::Button("Browse##selectbottom"))
-	{
-		auto selection = pfd::open_file("Select Bottom Minimap Texture", ".",
-			{"Image Files", "*.png *.bmp *.jpg *.jpeg", "All Files", "*"}).result();
-		if (!selection.empty())
-		{
-			bottomTexturePath = selection.front();
-			bottomTexture = Texture(bottomTexturePath);
-			hasBottomTexture = !bottomTexture.IsEmpty();
-		}
-	}
-	ImGui::SameLine();
-	if (ImGui::Button("Clear##clearbottom"))
-	{
-		bottomTexturePath.clear();
 		bottomTexture = Texture();
+		hasTopTexture = false;
 		hasBottomTexture = false;
 	}
 
@@ -251,34 +279,17 @@ bool MinimapConfig::RenderUI(const std::vector<Quadblock>& quadblocks)
 	ImGui::Separator();
 	if (IsReady())
 	{
-		// Show texture dimensions
-		ImGui::Text("Texture Size: %dx%d pixels", topTexture.GetWidth(), topTexture.GetHeight());
-		
-		// Check if dimensions match
-		if (topTexture.GetWidth() != bottomTexture.GetWidth() || topTexture.GetHeight() != bottomTexture.GetHeight())
-		{
-			ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Warning: Top and bottom textures have different dimensions!");
-		}
-		else
-		{
-			ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Minimap ready!");
-		}
+		// Show processed texture dimensions (after stretching)
+		ImGui::Text("Processed Size (each half): %dx%d pixels", topTexture.GetWidth(), topTexture.GetHeight());
+		ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Minimap ready!");
 	}
-	else if (hasTopTexture || hasBottomTexture)
+	else if (!sourceTexturePath.empty())
 	{
-		if (hasTopTexture)
-		{
-			ImGui::Text("Top texture: %dx%d pixels", topTexture.GetWidth(), topTexture.GetHeight());
-		}
-		if (hasBottomTexture)
-		{
-			ImGui::Text("Bottom texture: %dx%d pixels", bottomTexture.GetWidth(), bottomTexture.GetHeight());
-		}
-		ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Need both top and bottom textures");
+		ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Error processing texture - check that height is even");
 	}
 	else
 	{
-		ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No minimap textures loaded");
+		ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "No minimap texture loaded");
 	}
 	
 	return boundsChanged;

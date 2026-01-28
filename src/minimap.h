@@ -35,11 +35,10 @@ struct MinimapConfig
 	// Unknown field - used for drawing, needed for some levels like Crash Cove
 	int16_t unk = 0;
 
-	// Texture paths
-	std::filesystem::path topTexturePath;
-	std::filesystem::path bottomTexturePath;
+	// Texture paths - single source image that will be split and stretched
+	std::filesystem::path sourceTexturePath;
 
-	// Texture objects
+	// Texture objects (generated from source)
 	Texture topTexture;
 	Texture bottomTexture;
 
