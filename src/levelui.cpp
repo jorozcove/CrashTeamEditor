@@ -456,9 +456,9 @@ void Level::RenderUI(Renderer& renderer)
 		ImGui::End();
 	}
 
-	if (m_showModelImporterWindow)
+	if (Windows::w_modelImporter)
 	{
-		if (ImGui::Begin("Model Importer", &m_showModelImporterWindow))
+		if (ImGui::Begin("Model Importer", &Windows::w_modelImporter))
 		{
 			std::string modelPath = m_modelImporterPath.string();
 			ImGui::Text("Model Path"); ImGui::SameLine();
