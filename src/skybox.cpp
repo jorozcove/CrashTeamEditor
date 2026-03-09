@@ -91,6 +91,61 @@ bool Skybox::LoadOBJ(const std::filesystem::path& path)
 	return true;
 }
 
+
+bool Skybox::LoadFromPSX(const PSX::Skybox& psxHeader, const std::vector<PSX::SkyboxVertex>& psxVerts, const std::vector<std::vector<uint16_t>>& segmentIndices,
+	const std::filesystem::path& objPath)
+{
+	if (psxVerts.empty()) { return false; }
+
+	std::ostringstream oss;
+	// Vertices with vertex colors: "v x y z r g b"
+	for (const PSX::SkyboxVertex& sv : psxVerts)
+	{
+		float x = ConvertFP(sv.pos.x, FP_ONE_GEO);
+		float y = ConvertFP(sv.pos.y, FP_ONE_GEO);
+		float z = ConvertFP(sv.pos.z, FP_ONE_GEO);
+		float r = ConvertFP(sv.color.r, 255);
+		float g = ConvertFP(sv.color.g, 255);
+		float b = ConvertFP(sv.color.b, 255);
+		oss << "v " << x << " " << y << " " << z
+			<< " " << r << " " << g << " " << b << "\n";
+	}
+	oss << "\n";
+
+	// Faces use the first non-empty segment as canonical source.l.
+	const std::vector<uint16_t>* canonicalIndices = nullptr;
+	for (const auto& seg : segmentIndices)
+	{
+		if (!seg.empty()) { canonicalIndices = &seg; break; }
+	}
+
+	if (!canonicalIndices) { return false; }
+
+	// Each face: SKYBOX_FACE_STRIDE uint16_t values = 3 byte offsets + 1 padding
+	// Convert byte offsets back to OBJ vertex indices
+	const size_t faceCount = canonicalIndices->size() / PSX::SKYBOX_FACE_STRIDE;
+	for (size_t i = 0; i < faceCount; i++)
+	{
+		const size_t base = i * PSX::SKYBOX_FACE_STRIDE;
+		const uint16_t offA = (*canonicalIndices)[base + 0];
+		const uint16_t offB = (*canonicalIndices)[base + 1];
+		const uint16_t offC = (*canonicalIndices)[base + 2];
+
+		const int idxA = static_cast<int>(offA / sizeof(PSX::SkyboxVertex)) + 1;
+		const int idxB = static_cast<int>(offB / sizeof(PSX::SkyboxVertex)) + 1;
+		const int idxC = static_cast<int>(offC / sizeof(PSX::SkyboxVertex)) + 1;
+
+		oss << "f " << idxA << " " << idxB << " " << idxC << "\n";
+	}
+
+	std::ofstream objFile(objPath);
+	if (!objFile.is_open()) { return false; }
+	objFile << oss.str();
+	objFile.close();
+
+	return LoadOBJ(objPath);
+}
+
 void Skybox::DistributeFaces(std::vector<std::vector<uint16_t>>& segments) const
 {
 	segments.clear();

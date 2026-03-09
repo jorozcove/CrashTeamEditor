@@ -21,6 +21,9 @@ public:
 	// Load skybox geometry from OBJ file (vertices with vertex colors, triangle faces)
 	bool LoadOBJ(const std::filesystem::path& path);
 
+	// Create skybox OBJ file from PSX data, and load it
+	bool LoadFromPSX(const PSX::Skybox& psxHeader, const std::vector<PSX::SkyboxVertex>& psxVerts, const std::vector<std::vector<uint16_t>>& segmentIndices, const std::filesystem::path& objPath);
+
 	// Serialize skybox data to a binary buffer for .lev export
 	// Returns: serialized bytes (Skybox header + vertex array + face index arrays)
 	// Fills ptrMapOffsets with the file offsets of all pointer fields that need pointer map entries
