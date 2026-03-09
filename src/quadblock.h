@@ -209,6 +209,9 @@ private:
 	std::array<size_t, NUM_FACES_QUADBLOCK + 1> m_textureIDs = { 0, 0, 0, 0, 0 };
 	std::array<size_t, NUM_FACES_QUADBLOCK + 1> m_animTexOffset = {0, 0, 0, 0, 0};
 	std::filesystem::path m_texPath;
+	bool m_hasRawNormalData; //for raw normals
+	uint8_t m_triNormalVecBitshift;
+	int16_t m_triNormalVecDividend[10];
 	size_t m_renderPrimitiveIndex = RENDER_INDEX_NONE;
 	UpdateFilterCallback m_filterCallback;
 };
