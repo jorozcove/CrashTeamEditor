@@ -722,6 +722,9 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 {
 	std::ifstream file(levFile, std::ios::binary);
 
+	m_parentPath = levFile.parent_path();
+	m_name = levFile.filename().replace_extension().string() + "_edit";
+
 	uint32_t offPointerMap;
 	Read(file, offPointerMap);
 
