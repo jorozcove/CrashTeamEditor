@@ -762,6 +762,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		vertices.push_back(vertex);
 	}
 
+	std::vector<uint32_t> quadblocksVisibleSetOff;
 	file.seekg(offLev + std::streampos(meshInfo.offQuadblocks));
 	for (uint32_t i = 0; i < meshInfo.numQuadblocks; i++)
 	{
@@ -769,6 +770,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		Read(file, quadblock);
 		m_quadblocks.emplace_back(quadblock, vertices, [this](const Quadblock& qb) { UpdateFilterRenderData(qb); });
 		m_materialToQuadblocks["default"].push_back(i);
+		quadblocksVisibleSetOff.push_back(quadblock.offVisibleSet);
 	}
 
 
@@ -809,6 +811,76 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		else { m_bsp.Clear(); }
 	}
 	else { m_bsp.Clear(); }
+
+
+	// Load VisTree
+	if (header.offVisMem != 0)
+	{
+		file.seekg(offLev + static_cast<std::streamoff>(header.offVisMem));
+		PSX::VisualMem visMem = {};
+		Read(file, visMem);
+
+		if (visMem.offNodes[0] != 0)
+		{
+			std::vector<const BSP*> bspLeaves = m_bsp.GetLeaves();
+			std::vector<const BSP*> bspNodes = m_bsp.GetTree();
+
+			m_bspVis = BitMatrix(bspLeaves.size(), bspLeaves.size());
+
+			std::map<size_t, size_t> leafIdToMatrix;
+			for (size_t i = 0; i < bspLeaves.size(); i++)
+			{
+				leafIdToMatrix[bspLeaves[i]->GetId()] = i;
+			}
+
+			const size_t visNodeSize = (bspNodes.size() + 31) / 32;
+
+			// Build a map from offVisibleBSPNodes -> already-processed sourceIdx
+			// so duplicate VisibleSets (shared across quadblocks in the same leaf)
+			// are only read and decoded once.
+			std::unordered_map<uint32_t, size_t> processedOffsets;
+
+			for (size_t q = 0; q < m_quadblocks.size(); q++)
+			{
+				// Each serialized PSX::Quadblock carries its own offVisibleSet.
+				// Read it back from the quadblock data we already loaded.
+				uint32_t offVisibleSet = quadblocksVisibleSetOff[q];
+				if (offVisibleSet == 0) { continue; }
+
+				// Read the VisibleSet struct for this quadblock
+				PSX::VisibleSet visSet = {};
+				file.seekg(offLev + static_cast<std::streamoff>(offVisibleSet));
+				Read(file, visSet);
+
+				if (visSet.offVisibleBSPNodes == 0) { continue; }
+
+				// Skip if we already processed this exact bitfield
+				// (another quadblock in the same leaf will share the same offset)
+				if (processedOffsets.count(visSet.offVisibleBSPNodes)) { continue; }
+
+				size_t sourceBspId = m_quadblocks[q].GetBSPID() & ~BSPID::LEAF;
+				auto it = leafIdToMatrix.find(sourceBspId);
+				if (it == leafIdToMatrix.end()) { continue; }
+				size_t sourceIdx = it->second;
+
+				processedOffsets[visSet.offVisibleBSPNodes] = sourceIdx;
+
+				// Read the visibility bitfield for this leaf
+				file.seekg(offLev + static_cast<std::streamoff>(visSet.offVisibleBSPNodes));
+				std::vector<uint32_t> visNodes(visNodeSize);
+				for (size_t i = 0; i < visNodeSize; i++) { Read(file, visNodes[i]); }
+
+				// Decode visible destination leaves
+				for (size_t i = 0; i < bspLeaves.size(); i++)
+				{
+					size_t destBspId = bspLeaves[i]->GetId();
+					uint32_t word = visNodes[destBspId / 32];
+					uint32_t bit = 1u << (31 - (destBspId % 32));
+					if (word & bit) { m_bspVis.Set(true, sourceIdx, i); }
+				}
+			}
+		}
+	}
 
 	file.seekg(offLev + std::streampos(header.offCheckpointNodes));
 	for (uint32_t i = 0; i < header.numCheckpointNodes; i++)
