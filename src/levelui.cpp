@@ -724,10 +724,12 @@ void Level::RenderUI(Renderer& renderer)
 				m_checkpointPaths.push_back(Path(m_checkpointPaths.size()));
 			}
 			ImGui::SameLine();
+			ImGui::BeginDisabled(m_checkpointPaths.empty());
 			if (ImGui::Button("Delete Path"))
 			{
 				m_checkpointPaths.pop_back();
 			}
+			ImGui::EndDisabled();
 
 			bool ready = !m_checkpointPaths.empty();
 			for (const Path& path : m_checkpointPaths)
