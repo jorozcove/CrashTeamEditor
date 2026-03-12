@@ -203,6 +203,10 @@ bool Level::GenerateCheckpoints()
 	for (const Path& path : m_checkpointPaths) { if (!path.IsReady()) { return false; } }
 
 	ResetFilter();
+	for (size_t i = 0; i < m_quadblocks.size(); i++)
+	{
+		m_quadblocks[i].SetCheckpoint(-1);
+	}
 	size_t checkpointIndex = 0;
 	std::vector<size_t> linkNodeIndexes;
 	std::vector<std::vector<Checkpoint>> pathCheckpoints;
