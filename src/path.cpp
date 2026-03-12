@@ -141,7 +141,7 @@ void Path::UpdateDist(float dist, const Vec3& refPoint, std::vector<Checkpoint>&
 	if (m_right) { m_right->UpdateDist(dist, checkpoints[m_end].GetPos(), checkpoints); }
 }
 
-std::vector<Checkpoint> Path::GeneratePath(size_t pathStartIndex, std::vector<Quadblock>& quadblocks)
+std::vector<Checkpoint> Path::GeneratePath(size_t pathStartIndex, std::vector<Quadblock>& quadblocks, bool& overlap)
 {
 	/*
 		Begin from the start point, find all neighbour quadblocks.
@@ -185,7 +185,6 @@ std::vector<Checkpoint> Path::GeneratePath(size_t pathStartIndex, std::vector<Qu
 			visitedQuadblocks[i] = true;
 		}
 	}
-	bool overlap = false;
 	while (!toVisit.empty())
 	{
 		size_t currQuadID = toVisit.back();
@@ -398,7 +397,7 @@ std::vector<Checkpoint> Path::GeneratePath(size_t pathStartIndex, std::vector<Qu
 	std::vector<Checkpoint> leftCheckpoints, rightCheckpoints;
 	if (m_left)
 	{
-		leftCheckpoints = m_left->GeneratePath(pathStartIndex, quadblocks);
+		leftCheckpoints = m_left->GeneratePath(pathStartIndex, quadblocks, overlap);
 		checkpoints.back().UpdateLeft(leftCheckpoints.back().GetIndex());
 		checkpoints.front().UpdateLeft(leftCheckpoints.front().GetIndex());
 		leftCheckpoints.back().UpdateRight(checkpoints.back().GetIndex());
@@ -407,7 +406,7 @@ std::vector<Checkpoint> Path::GeneratePath(size_t pathStartIndex, std::vector<Qu
 	}
 	if (m_right)
 	{
-		rightCheckpoints = m_right->GeneratePath(pathStartIndex, quadblocks);
+		rightCheckpoints = m_right->GeneratePath(pathStartIndex, quadblocks, overlap);
 		checkpoints.back().UpdateRight(rightCheckpoints.back().GetIndex());
 		checkpoints.front().UpdateRight(rightCheckpoints.front().GetIndex());
 		rightCheckpoints.back().UpdateLeft(checkpoints.back().GetIndex());

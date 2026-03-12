@@ -206,9 +206,10 @@ bool Level::GenerateCheckpoints()
 	size_t checkpointIndex = 0;
 	std::vector<size_t> linkNodeIndexes;
 	std::vector<std::vector<Checkpoint>> pathCheckpoints;
+	bool overlap = false;
 	for (Path& path : m_checkpointPaths)
 	{
-		pathCheckpoints.push_back(path.GeneratePath(checkpointIndex, m_quadblocks));
+		pathCheckpoints.push_back(path.GeneratePath(checkpointIndex, m_quadblocks, overlap));
 		checkpointIndex += pathCheckpoints.back().size();
 		linkNodeIndexes.push_back(path.GetStart());
 		linkNodeIndexes.push_back(path.GetEnd());
@@ -405,7 +406,7 @@ bool Level::GenerateCheckpoints()
 	}
 
 	UpdateRenderCheckpointData();
-	return true;
+	return !overlap;
 }
 
 
