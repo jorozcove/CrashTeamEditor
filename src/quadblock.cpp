@@ -903,34 +903,30 @@ void Quadblock::SetDefaultValues()
 	}
 
 	const bool equivalentDiagonal = std::abs((m_p[2].m_pos - m_p[6].m_pos).Length() - ((m_p[2].m_pos - m_p[4].m_pos).Length() + (m_p[4].m_pos - m_p[6].m_pos).Length())) <= EPSILON;
-
-	if (equivalentDiagonal)
+	const bool equivalentSide02 = std::abs((m_p[0].m_pos - m_p[2].m_pos).Length() - ((m_p[0].m_pos - m_p[1].m_pos).Length() + (m_p[1].m_pos - m_p[2].m_pos).Length())) <= EPSILON;
+	const bool equivalentSide06 = std::abs((m_p[0].m_pos - m_p[6].m_pos).Length() - ((m_p[0].m_pos - m_p[3].m_pos).Length() + (m_p[3].m_pos - m_p[6].m_pos).Length())) <= EPSILON;
+	if (equivalentDiagonal && equivalentSide02 && equivalentSide06) { m_collTriFaces = {{0, 2, 6}}; }
+	else
 	{
-		const bool equivalentSide02 = std::abs((m_p[0].m_pos - m_p[2].m_pos).Length() - ((m_p[0].m_pos - m_p[1].m_pos).Length() + (m_p[1].m_pos - m_p[2].m_pos).Length())) <= EPSILON;
-		const bool equivalentSide06 = std::abs((m_p[0].m_pos - m_p[6].m_pos).Length() - ((m_p[0].m_pos - m_p[3].m_pos).Length() + (m_p[3].m_pos - m_p[6].m_pos).Length())) <= EPSILON;
-		if (equivalentSide02 && equivalentSide06) { m_collTriFaces = {{0, 2, 6}}; }
+		m_collTriFaces = {
+			{0, 1, 3},
+			{1, 2, 4},
+			{1, 4, 3},
+			{4, 6, 3}
+		};
+	}
+
+	if (!m_triblock)
+	{
+		const bool equivalentSide28 = std::abs((m_p[2].m_pos - m_p[8].m_pos).Length() - ((m_p[2].m_pos - m_p[5].m_pos).Length() + (m_p[5].m_pos - m_p[8].m_pos).Length())) <= EPSILON;
+		const bool equivalentSide68 = std::abs((m_p[6].m_pos - m_p[8].m_pos).Length() - ((m_p[6].m_pos - m_p[7].m_pos).Length() + (m_p[7].m_pos - m_p[8].m_pos).Length())) <= EPSILON;
+		if (equivalentDiagonal && equivalentSide28 && equivalentSide68) { m_collTriFaces.push_back({2, 8, 6}); }
 		else
 		{
-			m_collTriFaces = {
-				{0, 1, 3},
-				{1, 2, 4},
-				{1, 4, 3},
-				{4, 6, 3}
-			};
-		}
-
-		if (!m_triblock)
-		{
-			const bool equivalentSide28 = std::abs((m_p[2].m_pos - m_p[8].m_pos).Length() - ((m_p[2].m_pos - m_p[5].m_pos).Length() + (m_p[5].m_pos - m_p[8].m_pos).Length())) <= EPSILON;
-			const bool equivalentSide68 = std::abs((m_p[6].m_pos - m_p[8].m_pos).Length() - ((m_p[6].m_pos - m_p[7].m_pos).Length() + (m_p[7].m_pos - m_p[8].m_pos).Length())) <= EPSILON;
-			if (equivalentDiagonal && equivalentSide28 && equivalentSide68) { m_collTriFaces.push_back({2, 8, 6}); }
-			else
-			{
-				m_collTriFaces.push_back({2, 5, 4});
-				m_collTriFaces.push_back({4, 7, 6});
-				m_collTriFaces.push_back({4, 5, 7});
-				m_collTriFaces.push_back({5, 8, 7});
-			}
+			m_collTriFaces.push_back({2, 5, 4});
+			m_collTriFaces.push_back({4, 7, 6});
+			m_collTriFaces.push_back({4, 5, 7});
+			m_collTriFaces.push_back({5, 8, 7});
 		}
 	}
 
