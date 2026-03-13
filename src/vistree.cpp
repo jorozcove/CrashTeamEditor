@@ -7,7 +7,7 @@
 
 bool BitMatrix::Get(size_t x, size_t y) const
 {
-	return m_data[(y * m_width) + x] != 0;
+	return m_data[(x * m_width) + y] != 0;
 }
 
 size_t BitMatrix::GetWidth() const
