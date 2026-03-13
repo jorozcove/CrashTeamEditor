@@ -22,7 +22,7 @@ size_t BitMatrix::GetHeight() const
 
 void BitMatrix::Set(bool value, size_t x, size_t y)
 {
-	m_data[(y * m_width) + x] = value ? 1 : 0;
+	m_data[(x * m_width) + y] = value ? 1 : 0;
 }
 
 void BitMatrix::SetRow(const std::vector<uint8_t>& rowData, size_t y)
