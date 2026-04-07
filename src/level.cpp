@@ -9,8 +9,12 @@
 #include "vistree.h"
 #include "text3d.h"
 
+
+#include <filesystem>
+#include <iostream>
 #include <fstream>
 #include <unordered_set>
+#include <set>
 #include <map>
 #include <algorithm>
 
@@ -718,9 +722,11 @@ void Level::ManageTurbopad(Quadblock& quadblock)
 	}
 }
 
+
 bool Level::LoadLEV(const std::filesystem::path& levFile)
 {
 	std::ifstream file(levFile, std::ios::binary);
+	if (!file.is_open()) return false;
 
 	uint32_t offPointerMap;
 	Read(file, offPointerMap);
@@ -759,15 +765,305 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		vertices.push_back(vertex);
 	}
 
+
+	// Loading textures and animated textures and quadblocks
+	std::filesystem::path vrmPath = levFile;
+	vrmPath.replace_extension(".vrm");
+	std::vector<uint16_t> vram =  ReadRawVRAM(vrmPath);
+	int texCounter = 0;
+	std::unordered_map<LayoutKey, PixelBounds> textureToPixelBounds; // Map Layout key -> Pixels bounds of the texture.
+	std::unordered_map<LayoutKey, std::string> materialCache; // Layout Key -> matName
+	std::map<size_t, std::map<size_t, size_t>> quadblockFaceToAnimOffset; // Map: quadblock index -> face index -> AnimTex offset
+	std::unordered_map<size_t, PSX::AnimTex> animTexDataMap; // Map : relativeOffset -> AnimTex
+	std::unordered_map<size_t, std::vector<size_t>> animTexFrames; // Map : relativeOffset (AnimTex) -> List of TextureGroup Index
+	std::unordered_map<size_t, std::string> textureGroupToMaterial; // Map : texture group offset -> material name
+	
+	std::filesystem::path tempDir = levFile.parent_path() / (levFile.stem().string() + "_textures");
+	std::filesystem::create_directories(tempDir);
+
+	bool hasAnimData = header.offAnimTex > 0;
+	size_t offTextureStart = static_cast<size_t>(header.offMeshInfo) + sizeof(PSX::MeshInfo);
+	size_t offTextureEnd = hasAnimData ? header.offAnimTex : meshInfo.offQuadblocks;
+	size_t offAnimStart = header.offAnimTex;
+	uint32_t offEndAnimData = meshInfo.offQuadblocks;
+
+	// 1st Pass : Parse all PSX::AnimTex and populate animTexDataMap and animTexFrames, and calculate UV bounds
+	if (hasAnimData)
+	{
+		size_t currentOffset = offAnimStart;
+		while (currentOffset < offEndAnimData)
+		{
+			file.seekg(offLev + std::streampos(currentOffset));
+			PSX::AnimTex animTex;
+			Read(file, animTex);
+			size_t relativeOffset = currentOffset - header.offAnimTex;
+			animTexDataMap[relativeOffset] = animTex;
+
+			std::vector<size_t> frameTextureGroupIndices;
+			for (uint16_t f = 0; f < animTex.frameCount; f++)
+			{
+				uint32_t frameTexOffset;
+				Read(file, frameTexOffset);
+				if (frameTexOffset >= offTextureStart && frameTexOffset < offTextureEnd)
+				{
+					size_t textureGroupIndex = (frameTexOffset - offTextureStart) / sizeof(PSX::TextureGroup);
+					frameTextureGroupIndices.push_back(textureGroupIndex);
+
+					std::streampos currentPos = file.tellg();
+					file.seekg(offLev + static_cast<std::streamoff>(frameTexOffset));
+					PSX::TextureGroup group = {};
+					Read(file, group);
+					file.seekg(currentPos);
+					const PSX::TextureLayout& layout = group.middle;
+					LayoutKey key(layout);
+
+					if (!materialCache.contains(key))
+					{
+						std::string newMatName = "tex_" + std::to_string(texCounter++);
+						materialCache[key] = newMatName;
+					}
+					textureGroupToMaterial[textureGroupIndex] = materialCache[key];
+
+					RawUV rawUV(layout);
+					textureToPixelBounds[key].Update(rawUV);
+				}
+				else
+				{
+					printf("    Frame %u: offset=0x%x OUT OF RANGE (offTextureStart=0x%zx, offAnimTex=0x%x)\n",
+						f, frameTexOffset, offTextureStart, header.offAnimTex);
+				}
+			}
+			animTexFrames[relativeOffset] = frameTextureGroupIndices;
+			currentOffset += sizeof(PSX::AnimTex) + (animTex.frameCount * sizeof(uint32_t));
+		}
+	}
+
+	// 2nd pass : Non animated Texture reading and UV bounding boxes
 	file.seekg(offLev + std::streampos(meshInfo.offQuadblocks));
 	for (uint32_t i = 0; i < meshInfo.numQuadblocks; i++)
 	{
-		PSX::Quadblock quadblock = {};
-		Read(file, quadblock);
-		m_quadblocks.emplace_back(quadblock, vertices, [this](const Quadblock& qb) { UpdateFilterRenderData(qb); });
-		m_materialToQuadblocks["default"].push_back(i);
+		PSX::Quadblock psxQuad = {};
+		Read(file, psxQuad);
+		for (int f = 0; f < 4; f++)
+		{
+			uint32_t texOffset = psxQuad.offMidTextures[f];
+			if (texOffset >= offTextureStart && texOffset < offTextureEnd) // Regular textures
+			{
+				std::streampos currentPos = file.tellg();
+				file.seekg(offLev + static_cast<std::streamoff>(texOffset));
+				PSX::TextureGroup group = {};
+				Read(file, group);
+				file.seekg(currentPos);
+				const PSX::TextureLayout& layout = group.middle;
+				LayoutKey key(layout);
+
+				if (!materialCache.contains(key))
+				{
+					std::string newMatName = "tex_" + std::to_string(texCounter++);
+					materialCache[key] = newMatName;
+				}
+				size_t textureGroupIndex = (texOffset - offTextureStart) / sizeof(PSX::TextureGroup);
+				textureGroupToMaterial[textureGroupIndex] = materialCache[key];
+
+				RawUV rawUV(layout, psxQuad.drawOrderLow, f);
+				textureToPixelBounds[key].Update(rawUV);
+			}
+			else if (hasAnimData && texOffset >= offAnimStart && texOffset < offEndAnimData)
+			{
+				// for AnimTex, texOffset isn't simply the animOffset of the AnimTex.
+				// We have to find it by looking within which animtex framearray bounds it falls
+				size_t relativeOffset = texOffset - header.offAnimTex;
+				size_t foundAnimOffset = 0;
+				bool found = false;
+
+				for (const auto& [animOffset, animTex] : animTexDataMap)
+				{
+					// Calculate where the frame array starts and ends for this AnimTex
+					size_t frameArrayStart = animOffset + sizeof(PSX::AnimTex);
+					size_t frameArrayEnd = frameArrayStart + (animTex.frameCount * sizeof(uint32_t));
+
+					// Check if relativeOffset falls within this frame array
+					if (relativeOffset >= animOffset && relativeOffset < frameArrayEnd)
+					{
+						foundAnimOffset = animOffset;
+						found = true;
+						break;
+					}
+				}
+				if (found)
+				{
+					quadblockFaceToAnimOffset[i][f] = foundAnimOffset;
+				}
+				else
+				{
+					printf("WARNING: Could not find owning AnimTex for quadblock %d\n", psxQuad.id);
+				}
+			}
+		}
 	}
 
+	// 3rd pass : Create PNGs and Materials
+	for (const auto& [key, bounds] : textureToPixelBounds)
+	{
+		std::string newMatName = materialCache[key];
+		Texture newTexture(key, bounds, vram, newMatName, tempDir, true);
+		m_materialToTexture[newMatName] = newTexture;
+	}
+
+
+	// 4th pass : create quadblocks with material, UVs and texture	
+	file.seekg(offLev + std::streampos(meshInfo.offQuadblocks));
+	for (uint32_t i = 0; i < meshInfo.numQuadblocks; i++)
+	{
+		PSX::Quadblock psxQuad = {};
+		Read(file, psxQuad);
+		Quadblock& qb = m_quadblocks.emplace_back(psxQuad, vertices, [this](const Quadblock& qb) { UpdateFilterRenderData(qb); });
+		bool materialAssigned = false;
+		std::string qbMatName = "default";
+		for (int f = 0; f < 4; f++) 
+		{
+			uint32_t texOffset = psxQuad.offMidTextures[f];
+			if (texOffset >= offTextureStart && texOffset < offTextureEnd)// Regular texture
+			{
+				std::streampos currentPos = file.tellg();
+				file.seekg(offLev + static_cast<std::streamoff>(texOffset));
+				PSX::TextureGroup group = {};
+				Read(file, group);
+				file.seekg(currentPos);
+
+				const PSX::TextureLayout& layout = group.middle;
+				LayoutKey key(layout);
+
+				if (!materialAssigned)
+				{
+					qbMatName = materialCache[key];
+					qb.SetMaterial(qbMatName);
+					qb.SetTexPath(m_materialToTexture[qbMatName].GetPath());
+					m_materialToQuadblocks[qbMatName].push_back(i);
+					materialAssigned = true;
+				}
+
+				RawUV rawUV(layout, psxQuad.drawOrderLow, f);
+				const PixelBounds& bounds = textureToPixelBounds[key];
+				float croppedWidth = static_cast<float>(bounds.maxU - bounds.minU);
+				float croppedHeight = static_cast<float>(bounds.maxV - bounds.minV);
+				if (croppedWidth == 0) croppedWidth = 1.0f;
+				if (croppedHeight == 0) croppedHeight = 1.0f;
+				QuadUV uvs = {
+					Vec2((rawUV.u0 - bounds.minU) / croppedWidth, (rawUV.v0 - bounds.minV) / croppedHeight),
+					Vec2((rawUV.u1 - bounds.minU) / croppedWidth, (rawUV.v1 - bounds.minV) / croppedHeight),
+					Vec2((rawUV.u2 - bounds.minU) / croppedWidth, (rawUV.v2 - bounds.minV) / croppedHeight),
+					Vec2((rawUV.u3 - bounds.minU) / croppedWidth, (rawUV.v3 - bounds.minV) / croppedHeight)
+				};
+				qb.SetFaceUVs(f, uvs);
+			}
+			else if (hasAnimData && texOffset >= offAnimStart && texOffset < offEndAnimData)
+			{
+				// MATERIAL NOT YET ASSIGNED FOR ANIMATED QUAD. DO IT WHEN CREATING THE .OBJ (or somewhere else)
+				size_t AnimOffset = quadblockFaceToAnimOffset[i][f];
+				qb.SetAnimTextureOffset(AnimOffset, header.offAnimTex, f);
+				qb.SetAnimated(true);
+			}
+		}
+		if (!materialAssigned) 
+		{
+			qb.SetMaterial("default");
+			m_materialToQuadblocks["default"].push_back(i);
+		}
+	}
+
+	//5th pass : Create .obj for AnimText, and assign to quads
+	if (hasAnimData)
+	{
+		std::map<std::map<size_t, size_t>, std::set<size_t>> facePatternToQuadblocks;
+		for (const auto& [quadIdx, faceMap] : quadblockFaceToAnimOffset)
+		{
+			facePatternToQuadblocks[faceMap].insert(quadIdx);
+		}
+
+		std::set<std::map<size_t, size_t>> processedPatterns;
+		for (const auto& [faceMap, quadSet] : facePatternToQuadblocks)
+		{
+			if (processedPatterns.contains(faceMap)) continue;
+			if (faceMap.empty()) continue;
+
+			std::vector<size_t> quadIndices(quadSet.begin(), quadSet.end());
+
+			size_t firstAnimOffset = faceMap.begin()->second;
+			if (!animTexDataMap.contains(firstAnimOffset)) continue;
+
+			const PSX::AnimTex& firstAnimData = animTexDataMap[firstAnimOffset];
+			size_t frameCount = firstAnimData.frameCount;
+
+			// Verify all AnimTex in this pattern have the same frame count
+			bool validAnimation = true;
+			for (const auto& [faceIdx, animOffset] : faceMap)
+			{
+				if (!animTexDataMap.contains(animOffset) || !animTexFrames.contains(animOffset) || animTexDataMap[animOffset].frameCount != frameCount)
+				{
+					validAnimation = false;
+					break;
+				}
+			}
+			if (!validAnimation) continue;
+
+
+			std::array<std::vector<PSX::TextureLayout>, 4> faceFrameLayouts;
+			std::array<std::vector<std::string>, 4> faceFrameMaterials;
+			std::array<bool, 4> faceHasData = { false, false, false, false };
+
+			bool allMaterialsFound = true;
+
+			for (const auto& [faceIdx, animOffset] : faceMap)
+			{
+				for (size_t textureGroupIndex : animTexFrames[animOffset])
+				{
+					if (!textureGroupToMaterial.contains(textureGroupIndex))
+					{
+						allMaterialsFound = false;
+						break;
+					}
+					faceFrameMaterials[faceIdx].push_back(textureGroupToMaterial[textureGroupIndex]);
+					size_t frameTexOffset = offTextureStart + (textureGroupIndex * sizeof(PSX::TextureGroup));
+					std::streampos savedPos = file.tellg();
+					file.seekg(offLev + std::streampos(frameTexOffset));
+					PSX::TextureGroup group = {};
+					Read(file, group);
+					file.seekg(savedPos);
+					faceFrameLayouts[faceIdx].push_back(group.middle);
+				}
+				if (!allMaterialsFound) break;
+				faceHasData[faceIdx] = true;
+			}
+
+			if (!allMaterialsFound) continue;
+
+			// Create temporary OBJ file
+			std::string animName = faceFrameMaterials[0][0];
+			std::filesystem::path animDir = tempDir / animName;
+			std::filesystem::create_directories(animDir);
+
+			AnimTexture animTexture(animName, tempDir, faceFrameLayouts, faceFrameMaterials, quadIndices, m_quadblocks, textureToPixelBounds, m_materialToTexture, firstAnimData, m_animTextures);
+
+			if (!animTexture.IsEmpty())
+			{
+				animTexture.SetStartFrame(firstAnimData.startAtFrame);
+				animTexture.SetDuration(firstAnimData.frameDuration);
+
+				for (size_t quadIdx : quadIndices)
+				{
+					animTexture.AddQuadblockIndex(quadIdx);
+					std::string oldMat = m_quadblocks[quadIdx].GetMaterial();
+					auto& v = m_materialToQuadblocks[oldMat];
+					v.erase(std::remove(v.begin(), v.end(), quadIdx), v.end());
+					m_quadblocks[quadIdx].SetMaterial(animName);
+					m_materialToQuadblocks[animName].push_back(quadIdx);
+				}
+				m_animTextures.push_back(animTexture);
+				processedPatterns.insert(faceMap);
+			}
+		}
+	}
 
 	m_bsp.Clear();
 	file.seekg(offLev + std::streampos(meshInfo.offBSPNodes));
@@ -1915,6 +2211,51 @@ bool Level::UpdateVRM()
 	}
 
 	return true;
+}
+
+std::vector<uint16_t> Level::ReadRawVRAM(std::filesystem::path vrmPath)
+{
+	std::vector<uint16_t> vram(1024 * 512, 0); 
+
+	if (std::filesystem::exists(vrmPath))
+	{
+		std::ifstream vrmFile(vrmPath, std::ios::binary);
+
+		// Read the raw file into temporary memory
+		vrmFile.seekg(0, std::ios::end);
+		size_t vrmSize = vrmFile.tellg();
+		vrmFile.seekg(0, std::ios::beg);
+
+		std::vector<uint8_t> rawVrmData(vrmSize);
+		vrmFile.read(reinterpret_cast<char*>(rawVrmData.data()), vrmSize);
+		vrmFile.close();
+
+		const uint8_t* pVrm = rawVrmData.data();
+		uint32_t vrmMagic;
+		memcpy(&vrmMagic, pVrm, sizeof(uint32_t));
+		pVrm += sizeof(uint32_t);
+
+		// If magic is 0x20, we have a multi-block VRM (Standard for this level format)
+		if (vrmMagic == 0x20) {
+			for (int block = 0; block < 2; block++) {
+				PSX::VRMHeader blockHead;
+				memcpy(&blockHead, pVrm, sizeof(PSX::VRMHeader));
+				pVrm += sizeof(PSX::VRMHeader);
+
+				for (size_t y = 0; y < blockHead.height; y++) {
+					// Use the absolute coordinates provided in the VRM header
+					size_t vramIdx = (blockHead.y + y) * 1024 + blockHead.x;
+					size_t rowByteSize = blockHead.width * sizeof(uint16_t);
+
+					if (vramIdx + blockHead.width <= vram.size()) {
+						memcpy(&vram[vramIdx], pVrm, rowByteSize);
+					}
+					pVrm += rowByteSize;
+				}
+			}
+		}
+	}
+	return vram;
 }
 
 bool Level::UpdateAnimTextures(float deltaTime)
