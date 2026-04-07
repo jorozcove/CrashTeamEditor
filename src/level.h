@@ -66,6 +66,7 @@ public:
 	void ResetFilter();
 	void ResetRendererSelection();
 	void UpdateRenderCheckpointData();
+	void GenerateRenderLevData();
 
 private:
 	void ManageTurbopad(Quadblock& quadblock);
@@ -84,7 +85,6 @@ private:
 	void RenderUI(Renderer& renderer);
 
 	void InitModels(Renderer& renderer);
-	void GenerateRenderLevData();
 	void UpdateAnimationRenderData();
 	void UpdateFilterRenderData(const Quadblock& qb);
 	void GenerateRenderBspData();
