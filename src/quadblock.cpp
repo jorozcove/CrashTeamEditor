@@ -398,6 +398,9 @@ Quadblock::Quadblock(const PSX::Quadblock& quadblock, const std::vector<PSX::Ver
 		m_p[reverseIndexMapping[i]] = Vertex(vertex);
 	}
 	SetDefaultValues();
+	m_hasRawNormalData = true;
+	m_triNormalVecBitshift = quadblock.triNormalVecBitshift;
+	for (int i = 0; i < 10; i++) { m_triNormalVecDividend[i] = quadblock.triNormalVecDividend[i]; }
 	m_bbox.max = ConvertPSXVec3(quadblock.bbox.max, FP_ONE_GEO);
 	m_bbox.min = ConvertPSXVec3(quadblock.bbox.min, FP_ONE_GEO);
 
@@ -896,24 +899,33 @@ std::vector<uint8_t> Quadblock::Serialize(size_t id, size_t offTextures, const s
 	const size_t idVis = id / 32;
 	quadblock.id = static_cast<uint16_t>((32 * idVis) + (31 - (id % 32)));
 	quadblock.checkpointIndex = static_cast<uint8_t>(m_checkpointIndex);
-	quadblock.triNormalVecBitshift = static_cast<uint8_t>(std::round(std::log2(std::max(ComputeNormalVector(0, 2, 6).Length(), ComputeNormalVector(2, 8, 6).Length()) * 512.0f)));
 
-	auto CalculateNormalDividend = [this](size_t id0, size_t id1, size_t id2, float scaler) -> int16_t
-		{
-			return static_cast<int16_t>(std::round(scaler / ComputeNormalVector(id0, id1, id2).Length()));
-		};
+	if (!m_hasRawNormalData)
+	{
+		quadblock.triNormalVecBitshift = static_cast<uint8_t>(std::round(std::log2(std::max(ComputeNormalVector(0, 2, 6).Length(), ComputeNormalVector(2, 8, 6).Length()) * 512.0f)));
+		auto CalculateNormalDividend = [this](size_t id0, size_t id1, size_t id2, float scaler) -> int16_t
+			{
+				return static_cast<int16_t>(std::round(scaler / ComputeNormalVector(id0, id1, id2).Length()));
+			};
 
-	float scaler = static_cast<float>(1 << quadblock.triNormalVecBitshift);
-	quadblock.triNormalVecDividend[0] = CalculateNormalDividend(0, 1, 3, scaler);
-	quadblock.triNormalVecDividend[1] = CalculateNormalDividend(1, 4, 3, scaler);
-	quadblock.triNormalVecDividend[2] = CalculateNormalDividend(4, 1, 2, scaler);
-	quadblock.triNormalVecDividend[3] = CalculateNormalDividend(3, 4, 6, scaler);
-	quadblock.triNormalVecDividend[4] = CalculateNormalDividend(7, 4, 5, scaler);
-	quadblock.triNormalVecDividend[5] = CalculateNormalDividend(5, 8, 7, scaler);
-	quadblock.triNormalVecDividend[6] = CalculateNormalDividend(2, 5, 4, scaler);
-	quadblock.triNormalVecDividend[7] = CalculateNormalDividend(6, 4, 7, scaler);
-	quadblock.triNormalVecDividend[9] = CalculateNormalDividend(2, 8, 6, scaler); /* low LoD */
-	quadblock.triNormalVecDividend[8] = CalculateNormalDividend(0, 2, 6, scaler); /* low LoD */
+		float scaler = static_cast<float>(1 << quadblock.triNormalVecBitshift);
+		quadblock.triNormalVecDividend[0] = CalculateNormalDividend(0, 1, 3, scaler);
+		quadblock.triNormalVecDividend[1] = CalculateNormalDividend(1, 4, 3, scaler);
+		quadblock.triNormalVecDividend[2] = CalculateNormalDividend(4, 1, 2, scaler);
+		quadblock.triNormalVecDividend[3] = CalculateNormalDividend(3, 4, 6, scaler);
+		quadblock.triNormalVecDividend[4] = CalculateNormalDividend(7, 4, 5, scaler);
+		quadblock.triNormalVecDividend[5] = CalculateNormalDividend(5, 8, 7, scaler);
+		quadblock.triNormalVecDividend[6] = CalculateNormalDividend(2, 5, 4, scaler);
+		quadblock.triNormalVecDividend[7] = CalculateNormalDividend(6, 4, 7, scaler);
+		quadblock.triNormalVecDividend[9] = CalculateNormalDividend(2, 8, 6, scaler); /* low LoD */
+		quadblock.triNormalVecDividend[8] = CalculateNormalDividend(0, 2, 6, scaler); /* low LoD */
+	}
+	else
+	{
+		quadblock.triNormalVecBitshift = m_triNormalVecBitshift;
+		for (int i = 0; i < 10; i++) { quadblock.triNormalVecDividend[i] = m_triNormalVecDividend[i]; }
+	}
+
 	std::memcpy(buffer.data(), &quadblock, sizeof(quadblock));
 	return buffer;
 }
@@ -941,6 +953,7 @@ void Quadblock::SetDefaultValues()
 	m_animated = false;
 	m_filter = false;
 	m_downforce = 0;
+	m_hasRawNormalData = false;
 	m_filterColor = GuiRenderSettings::defaultFilterColor;
 	m_renderPrimitiveIndex = RENDER_INDEX_NONE;
 }
@@ -973,4 +986,5 @@ void Quadblock::ComputeBoundingBox()
 	}
 	m_bbox.min = min;
 	m_bbox.max = max;
+	m_hasRawNormalData = false;
 }

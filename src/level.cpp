@@ -743,6 +743,9 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	std::ifstream file(levFile, std::ios::binary);
 	if (!file.is_open()) return false;
 
+	m_parentPath = levFile.parent_path();
+	m_name = levFile.filename().replace_extension().string() + "_edit";
+
 	uint32_t offPointerMap;
 	Read(file, offPointerMap);
 
@@ -812,6 +815,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	vrmPath.replace_extension(".vrm");
 	std::vector<uint16_t> vram =  ReadRawVRAM(vrmPath);
 	int texCounter = 0;
+	std::vector<uint32_t> quadblocksVisibleSetOff; // List of VisibleSetOffset for quadblock. Needed for vistree loading, parsed with quadblocks.
 	std::unordered_map<LayoutKey, PixelBounds> textureToPixelBounds; // Map Layout key -> Pixels bounds of the texture.
 	std::unordered_map<LayoutKey, std::string> materialCache; // Layout Key -> matName
 	std::map<size_t, std::map<size_t, size_t>> quadblockFaceToAnimOffset; // Map: quadblock index -> face index -> AnimTex offset
@@ -958,6 +962,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	{
 		PSX::Quadblock psxQuad = {};
 		Read(file, psxQuad);
+		quadblocksVisibleSetOff.push_back(psxQuad.offVisibleSet);
 		Quadblock& qb = m_quadblocks.emplace_back(psxQuad, vertices, [this](const Quadblock& qb) { UpdateFilterRenderData(qb); });
 		bool materialAssigned = false;
 		std::string qbMatName = "default";
@@ -1144,6 +1149,76 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	}
 	else { m_bsp.Clear(); }
 
+
+	// Load VisTree
+	if (header.offVisMem != 0)
+	{
+		file.seekg(offLev + static_cast<std::streamoff>(header.offVisMem));
+		PSX::VisualMem visMem = {};
+		Read(file, visMem);
+
+		if (visMem.offNodes[0] != 0)
+		{
+			std::vector<const BSP*> bspLeaves = m_bsp.GetLeaves();
+			std::vector<const BSP*> bspNodes = m_bsp.GetTree();
+
+			m_bspVis = BitMatrix(bspLeaves.size(), bspLeaves.size());
+
+			std::map<size_t, size_t> leafIdToMatrix;
+			for (size_t i = 0; i < bspLeaves.size(); i++)
+			{
+				leafIdToMatrix[bspLeaves[i]->GetId()] = i;
+			}
+
+			const size_t visNodeSize = (bspNodes.size() + 31) / 32;
+
+			// Build a map from offVisibleBSPNodes -> already-processed sourceIdx
+			// so duplicate VisibleSets (shared across quadblocks in the same leaf)
+			// are only read and decoded once.
+			std::unordered_map<uint32_t, size_t> processedOffsets;
+
+			for (size_t q = 0; q < m_quadblocks.size(); q++)
+			{
+				// Each serialized PSX::Quadblock carries its own offVisibleSet.
+				// Read it back from the quadblock data we already loaded.
+				uint32_t offVisibleSet = quadblocksVisibleSetOff[q];
+				if (offVisibleSet == 0) { continue; }
+
+				// Read the VisibleSet struct for this quadblock
+				PSX::VisibleSet visSet = {};
+				file.seekg(offLev + static_cast<std::streamoff>(offVisibleSet));
+				Read(file, visSet);
+
+				if (visSet.offVisibleBSPNodes == 0) { continue; }
+
+				// Skip if we already processed this exact bitfield
+				// (another quadblock in the same leaf will share the same offset)
+				if (processedOffsets.count(visSet.offVisibleBSPNodes)) { continue; }
+
+				size_t sourceBspId = m_quadblocks[q].GetBSPID() & ~BSPID::LEAF;
+				auto it = leafIdToMatrix.find(sourceBspId);
+				if (it == leafIdToMatrix.end()) { continue; }
+				size_t sourceIdx = it->second;
+
+				processedOffsets[visSet.offVisibleBSPNodes] = sourceIdx;
+
+				// Read the visibility bitfield for this leaf
+				file.seekg(offLev + static_cast<std::streamoff>(visSet.offVisibleBSPNodes));
+				std::vector<uint32_t> visNodes(visNodeSize);
+				for (size_t i = 0; i < visNodeSize; i++) { Read(file, visNodes[i]); }
+
+				// Decode visible destination leaves
+				for (size_t i = 0; i < bspLeaves.size(); i++)
+				{
+					size_t destBspId = bspLeaves[i]->GetId();
+					uint32_t word = visNodes[destBspId / 32];
+					uint32_t bit = 1u << (31 - (destBspId % 32));
+					if (word & bit) { m_bspVis.Set(true, sourceIdx, i); }
+				}
+			}
+		}
+	}
+
 	file.seekg(offLev + std::streampos(header.offCheckpointNodes));
 	for (uint32_t i = 0; i < header.numCheckpointNodes; i++)
 	{
@@ -1184,6 +1259,42 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 			size_t ghostSize = header.offLevNavTable - extraHeader.offsets[PSX::LevelExtra::N_OXIDE_GHOST];
 			m_oxideGhost.resize(ghostSize);
 			file.read(reinterpret_cast<char*>(m_oxideGhost.data()), ghostSize);
+		}
+	}
+
+	//Load Skybox
+	if (header.offSkybox != 0)
+	{
+		PSX::Skybox psxSkybox = {};
+		file.seekg(offLev + std::streampos(header.offSkybox));
+		Read(file, psxSkybox);
+
+		std::vector<PSX::SkyboxVertex> psxVerts(psxSkybox.numVertex);
+		file.seekg(offLev + std::streampos(psxSkybox.offVertex));
+		for (uint32_t i = 0; i < psxSkybox.numVertex; i++)
+		{
+			Read(file, psxVerts[i]);
+		}
+
+		std::vector<std::vector<uint16_t>> segmentIndices(PSX::NUM_SKYBOX_SEGMENTS);
+		for (size_t seg = 0; seg < PSX::NUM_SKYBOX_SEGMENTS; seg++)
+		{
+			const int16_t faceCount = psxSkybox.numFaces[seg];
+			if (faceCount <= 0 || psxSkybox.offFaces[seg] == 0) { continue; }
+
+			const size_t indexCount = static_cast<size_t>(faceCount) * PSX::SKYBOX_FACE_STRIDE;
+			segmentIndices[seg].resize(indexCount);
+			file.seekg(offLev + std::streampos(psxSkybox.offFaces[seg]));
+			for (size_t i = 0; i < indexCount; i++)
+			{
+				Read(file, segmentIndices[seg][i]);
+			}
+		}
+
+		std::filesystem::path objPath = m_parentPath / (levFile.filename().replace_extension().string() + "_skybox.obj");
+		if (m_skybox.LoadFromPSX(psxSkybox, psxVerts, segmentIndices, objPath)) 
+		{
+			GenerateRenderSkyboxData();
 		}
 	}
 
