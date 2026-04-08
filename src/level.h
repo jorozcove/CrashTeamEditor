@@ -136,6 +136,7 @@ private:
 	std::vector<uint8_t> m_vrm;
 	Skybox m_skybox;
 
+	std::map<uint32_t, PSX::TextureGroup> m_rawTextureGroup;
 	std::map<std::string, std::vector<size_t>> m_materialToQuadblocks;
 	std::unordered_map<std::string, Texture> m_materialToTexture;
 	MaterialProperty<std::string, MaterialType::TERRAIN> m_propTerrain;

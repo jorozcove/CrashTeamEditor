@@ -399,6 +399,7 @@ Quadblock::Quadblock(const PSX::Quadblock& quadblock, const std::vector<PSX::Ver
 	}
 	SetDefaultValues();
 	m_hasRawNormalData = true;
+	m_hasRawTexture = true;
 	m_triNormalVecBitshift = quadblock.triNormalVecBitshift;
 	for (int i = 0; i < 10; i++) { m_triNormalVecDividend[i] = quadblock.triNormalVecDividend[i]; }
 	m_bbox.max = ConvertPSXVec3(quadblock.bbox.max, FP_ONE_GEO);
@@ -413,7 +414,9 @@ Quadblock::Quadblock(const PSX::Quadblock& quadblock, const std::vector<PSX::Ver
 		m_faceRotateFlip[i] = packedFace & 0b111;
 		m_faceDrawMode[i] = (packedFace >> 3) & 0b11;
 		if (quadblock.drawOrderHigh[i] != 0) { m_drawOrderHigh = static_cast<int>(quadblock.drawOrderHigh[i]); }
+		m_offTextures[i] = quadblock.offMidTextures[i];
 	}
+	m_offTextures[NUM_FACES_QUADBLOCK] = quadblock.offLowTexture;
 	m_terrain = quadblock.terrain;
 	m_checkpointIndex = quadblock.checkpointIndex;
 	if (m_checkpointIndex == std::numeric_limits<uint8_t>::max()) { m_checkpointIndex = -1; }
@@ -583,6 +586,11 @@ const std::filesystem::path& Quadblock::GetTexPath() const
 const std::array<QuadUV, NUM_FACES_QUADBLOCK + 1>& Quadblock::GetUVs() const
 {
 	return m_uvs;
+}
+
+uint32_t Quadblock::GetRawTexOffset(size_t i) const
+{
+	return m_offTextures[i];
 }
 
 size_t Quadblock::GetRenderPrimitiveIndex() const
@@ -954,6 +962,7 @@ void Quadblock::SetDefaultValues()
 	m_filter = false;
 	m_downforce = 0;
 	m_hasRawNormalData = false;
+	m_hasRawTexture = false;
 	m_filterColor = GuiRenderSettings::defaultFilterColor;
 	m_renderPrimitiveIndex = RENDER_INDEX_NONE;
 }

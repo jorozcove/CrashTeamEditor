@@ -137,6 +137,7 @@ public:
 	const QuadUV& GetQuadUV(size_t quad) const;
 	const std::filesystem::path& GetTexPath() const;
 	const std::array<QuadUV, NUM_FACES_QUADBLOCK + 1>& GetUVs() const;
+	uint32_t GetRawTexOffset(size_t i) const;
 	size_t GetRenderPrimitiveIndex() const;
 	const std::string& GetMaterial() const;
 	void SetRenderPrimitiveIndex(size_t triangleIndex);
@@ -218,6 +219,8 @@ private:
 	bool m_hasRawNormalData; //for raw normals
 	uint8_t m_triNormalVecBitshift;
 	int16_t m_triNormalVecDividend[10];
+	bool m_hasRawTexture;
+	uint32_t m_offTextures[NUM_FACES_QUADBLOCK + 1];
 	size_t m_renderPrimitiveIndex = RENDER_INDEX_NONE;
 	UpdateFilterCallback m_filterCallback;
 };
