@@ -875,7 +875,14 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 				file.seekg(offLev + static_cast<std::streamoff>(texOffset));
 				PSX::TextureGroup group = {};
 				Read(file, group);
-				m_rawTextureGroup[texOffset] = group;
+				// Use only the middle texgroup here for vanilla tempfix
+				PSX::TextureGroup tempTexGroup = {};
+				tempTexGroup.far = group.middle;
+				tempTexGroup.middle = group.middle;
+				tempTexGroup.near = group.middle;
+				tempTexGroup.mosaic = group.middle;
+				m_rawTextureGroup[texOffset] = tempTexGroup;
+
 				file.seekg(currentPos);
 				const PSX::TextureLayout& layout = group.middle;
 				LayoutKey key(layout);
@@ -1285,8 +1292,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 bool Level::SaveLEV(const std::filesystem::path& path)
 {
 
-	bool useRawTextures = false;
-
+	bool useRawTextures = true;
 
 
 	/*
@@ -1347,14 +1353,23 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 	std::vector<size_t> animPtrMapOffsets;
 	std::vector<PSX::TextureGroup> texGroups;
 	std::unordered_map<PSX::TextureLayout, size_t> savedLayouts;
-
+	bool hasAnimation = false;
 	if (useRawTextures)
 	{
 		std::map<uint32_t, size_t> rawOffsetRemap; // <OldOffset, newID>
-		for (Quadblock currQuad : m_quadblocks)
+		for (Quadblock& currQuad : m_quadblocks)
 		{
 			//if (currQuad has raw texture) need getter
-			if (currQuad.GetAnimated()) { continue; }
+			if (currQuad.GetAnimated()) 
+			{ 
+				hasAnimation = true;
+				currQuad.SetAnimated(false);
+				for (size_t i = 0; i < NUM_FACES_QUADBLOCK + 1; i++)
+				{
+					currQuad.SetTextureID(0, i);
+				}
+				continue; 
+			}
 			for (size_t i = 0; i < NUM_FACES_QUADBLOCK + 1; i++)
 			{
 				uint32_t rawTexOffset = currQuad.GetRawTexOffset(i);
@@ -1366,6 +1381,11 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 				currQuad.SetTextureID(rawOffsetRemap[rawTexOffset], i);
 			}
 		}
+		texGroups.push_back(defaultTexGroup);
+		offAnimData = currOffset + (sizeof(PSX::TextureGroup) * texGroups.size());
+		for (size_t i = 0; i < sizeof(uint32_t); i++) { animData.push_back(0); }
+		memcpy(&animData[0], &offAnimData, sizeof(uint32_t));
+		animPtrMapOffsets.push_back(0);
 	}
 	else
 	{
