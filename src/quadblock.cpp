@@ -424,6 +424,16 @@ Quadblock::Quadblock(const PSX::Quadblock& quadblock, const std::vector<PSX::Ver
 	m_material = "default";
 	m_triblock = false;
 	m_filterCallback = filterCallback;
+	//printf("%s at texoffset : %zu\n", m_name, m_offTextures[0]);
+
+	if (quadblock.id == 1263)
+	{
+		for (size_t i = 0; i < NUM_FACES_QUADBLOCK+1; i++)
+		{
+			m_offTextures[i] = 639108;
+		}
+	}
+		
 }
 
 const std::string& Quadblock::GetName() const

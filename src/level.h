@@ -137,6 +137,7 @@ private:
 	Skybox m_skybox;
 
 	std::map<uint32_t, PSX::TextureGroup> m_rawTextureGroup;
+	std::map<uint32_t, PSX::AnimTex> m_rawAnimTex;
 	std::map<std::string, std::vector<size_t>> m_materialToQuadblocks;
 	std::unordered_map<std::string, Texture> m_materialToTexture;
 	MaterialProperty<std::string, MaterialType::TERRAIN> m_propTerrain;

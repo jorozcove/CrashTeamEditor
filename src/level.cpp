@@ -750,6 +750,24 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	Read(file, offPointerMap);
 
 	std::streampos offLev = file.tellg();
+
+	std::set<uint32_t> pointerMap;
+	file.seekg(offLev + std::streampos(offPointerMap));
+	uint32_t pointerMapSize;
+	Read(file, pointerMapSize);
+	for (size_t i = 0; i < pointerMapSize / sizeof(uint32_t); i++)
+	{
+		uint32_t pointer;
+		Read(file, pointer);
+		pointerMap.insert(pointer);
+	}
+	printf("Pointer Map Content\n");
+	for (uint32_t ptr : pointerMap)
+	{
+		//printf("0x%x\n", ptr);
+	}
+
+	file.seekg(offLev);
 	PSX::LevHeader header = {};
 	Read(file, header);
 
@@ -808,13 +826,14 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	size_t offTextureEnd = hasAnimData ? header.offAnimTex : meshInfo.offQuadblocks;
 	size_t offAnimStart = header.offAnimTex;
 	uint32_t offEndAnimData = meshInfo.offQuadblocks;
-
+	printf("Has Anim Data : %d\n", hasAnimData);
 	// 1st Pass : Parse all PSX::AnimTex and populate animTexDataMap and animTexFrames, and calculate UV bounds
 	if (hasAnimData)
 	{
 		size_t currentOffset = offAnimStart;
 		while (currentOffset < offEndAnimData)
 		{
+			printf("Animtex at 0x%x\n", currentOffset);
 			file.seekg(offLev + std::streampos(currentOffset));
 			PSX::AnimTex animTex;
 			Read(file, animTex);
@@ -871,6 +890,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 			uint32_t texOffset = psxQuad.offMidTextures[f];
 			if (texOffset >= offTextureStart && texOffset < offTextureEnd) // Regular textures
 			{
+				printf("STATIC Quad%zu, TexOffset:0x%x, in pointerMap : %s\n", psxQuad.id, texOffset, pointerMap.contains(texOffset - 1) ? "oui" : "non");
 				std::streampos currentPos = file.tellg();
 				file.seekg(offLev + static_cast<std::streamoff>(texOffset));
 				PSX::TextureGroup group = {};
@@ -898,8 +918,9 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 				RawUV rawUV(layout, psxQuad.drawOrderLow, f);
 				textureToPixelBounds[key].Update(rawUV);
 			}
-			else if (hasAnimData && texOffset >= offAnimStart && texOffset < offEndAnimData)
+			else if (hasAnimData && texOffset >= offAnimStart)// && texOffset < offEndAnimData)
 			{
+				printf("ANIM   Quad%zu, TexOffset:0x%x, in pointerMap : %s\n", psxQuad.id, texOffset, pointerMap.contains(texOffset-1) ? "oui" : "non");
 				// for AnimTex, texOffset isn't simply the animOffset of the AnimTex.
 				// We have to find it by looking within which animtex framearray bounds it falls
 				size_t relativeOffset = texOffset - header.offAnimTex;
@@ -917,6 +938,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 					{
 						foundAnimOffset = animOffset;
 						found = true;
+						//printf("Quad%zu, TexOffset:0x%x, relativeOffset:0x%x, foundAnimOffset:0x%x\n", psxQuad.id, texOffset, relativeOffset, foundAnimOffset);
 						break;
 					}
 				}
@@ -928,6 +950,10 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 				{
 					printf("WARNING: Could not find owning AnimTex for quadblock %d\n", psxQuad.id);
 				}
+			}
+			else
+			{
+				printf("WARNING: Could not find corresponding texture for quadblock %d\n", psxQuad.id);
 			}
 		}
 	}
@@ -1286,6 +1312,10 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	m_loaded = true;
 	file.close();
 	GenerateRenderLevData();
+	for (Quadblock quad : m_quadblocks)
+	{
+		if (quad.GetAnimated()) { printf("Animated : %s\n", quad.GetName().c_str()); }
+	}
 	return true;
 }
 
