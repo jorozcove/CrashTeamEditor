@@ -863,7 +863,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 						tempTexGroup.middle = group.middle;
 						tempTexGroup.near = group.near;
 						tempTexGroup.mosaic = group.near;
-						m_rawTextureGroup[texOffset] = tempTexGroup;
+						m_rawTextureGroup[frameTexOffset] = tempTexGroup;
 						const PSX::TextureLayout& layout = group.middle;
 						LayoutKey key(layout);
 
@@ -1338,23 +1338,92 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 	std::vector<uint8_t> animData;
 	std::vector<size_t> animPtrMapOffsets;
 	std::vector<PSX::TextureGroup> texGroups;
+	std::vector<PSX::AnimTex> animTexGroups;
 	std::unordered_map<PSX::TextureLayout, size_t> savedLayouts;
-	bool hasAnimation = false;
 	if (useRawTextures)
 	{
-		std::map<uint32_t, size_t> rawOffsetRemap; // <OldOffset, newID>
-		for (Quadblock& currQuad : m_quadblocks)
+		std::map<uint32_t, size_t> rawOffsetRemap;
+		std::map<uint32_t, size_t> rawAnimOffsetRemap;
+		std::vector<std::pair<size_t, size_t>> animatedQuadFaceOffsets; // <quadIndex, faceIndex> -> animTexOffset
+		std::map<std::pair<size_t, size_t>, size_t> quadFaceToAnimOffset;
+
+		for (size_t qi = 0; qi < m_quadblocks.size(); qi++)
 		{
-			//if (currQuad has raw texture) need getter
-			if (currQuad.GetAnimated()) 
-			{ 
-				hasAnimation = true;
-				//currQuad.SetAnimated(false);
+			Quadblock& currQuad = m_quadblocks[qi];
+			if (currQuad.GetAnimated())
+			{
 				for (size_t i = 0; i < NUM_FACES_QUADBLOCK + 1; i++)
 				{
-					currQuad.SetTextureID(0, i);
+					uint32_t rawTexOffset = currQuad.GetRawTexOffset(i);
+					uint32_t animTexKey = rawTexOffset - 1;
+
+					if (!m_rawAnimTex.contains(animTexKey))
+					{
+						// This face is not animated, treat it as a static texture
+						if (!rawOffsetRemap.contains(rawTexOffset))
+						{
+							rawOffsetRemap[rawTexOffset] = texGroups.size();
+							if (!m_rawTextureGroup.contains(rawTexOffset))
+							{
+								printf("MISSING TEXTURE FOR %s FACE %d\n", currQuad.GetName().c_str(), i);
+							}
+							texGroups.push_back(m_rawTextureGroup[rawTexOffset]);
+						}
+						currQuad.SetTextureID(rawOffsetRemap[rawTexOffset], i);
+						continue;
+					}
+
+					const PSX::AnimTex& animTex = m_rawAnimTex[animTexKey];
+					const std::vector<uint32_t>& frameOffsets = m_rawAnimTexFrames[animTexKey];
+
+					std::vector<size_t> remappedFrameIndexes;
+					for (uint32_t frameRawOffset : frameOffsets)
+					{
+						if (!rawOffsetRemap.contains(frameRawOffset))
+						{
+							rawOffsetRemap[frameRawOffset] = texGroups.size();
+							if (!m_rawTextureGroup.contains(frameRawOffset))
+							{
+								printf("MISSING FRAME TEXTURE FOR %s FACE %d FRAME OFFSET %u\n",
+									currQuad.GetName().c_str(), i, frameRawOffset);
+							}
+							texGroups.push_back(m_rawTextureGroup[frameRawOffset]);
+						}
+						remappedFrameIndexes.push_back(rawOffsetRemap[frameRawOffset]);
+					}
+
+					if (i == NUM_FACES_QUADBLOCK)
+					{
+						currQuad.SetTextureID(remappedFrameIndexes[0], i);
+						continue;
+					}
+
+					if (!rawAnimOffsetRemap.contains(animTexKey))
+					{
+						size_t animTexOffset = animData.size();
+						rawAnimOffsetRemap[animTexKey] = animTexOffset;
+						animPtrMapOffsets.push_back(animTexOffset);
+
+						PSX::AnimTex rawAnimTex = animTex;
+						rawAnimTex.offActiveFrame = static_cast<uint32_t>(
+							offTexture + (remappedFrameIndexes[0] * sizeof(PSX::TextureGroup)));
+						animData.resize(animData.size() + sizeof(PSX::AnimTex));
+						memcpy(&animData[animTexOffset], &rawAnimTex, sizeof(PSX::AnimTex));
+
+						for (size_t j = 0; j < remappedFrameIndexes.size(); j++)
+						{
+							uint32_t offset = static_cast<uint32_t>(
+								(remappedFrameIndexes[j] * sizeof(PSX::TextureGroup)) + offTexture);
+							size_t offAnimTexArr = animData.size();
+							animPtrMapOffsets.push_back(offAnimTexArr);
+							for (size_t k = 0; k < sizeof(uint32_t); k++) { animData.push_back(0); }
+							memcpy(&animData[offAnimTexArr], &offset, sizeof(uint32_t));
+						}
+					}
+
+					quadFaceToAnimOffset[{qi, i}] = rawAnimOffsetRemap[animTexKey];
 				}
-				continue; 
+				continue;
 			}
 			for (size_t i = 0; i < NUM_FACES_QUADBLOCK + 1; i++)
 			{
@@ -1368,11 +1437,20 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 				currQuad.SetTextureID(rawOffsetRemap[rawTexOffset], i);
 			}
 		}
-		texGroups.push_back(defaultTexGroup);
+
+		//texGroups.push_back(defaultTexGroup);
 		offAnimData = currOffset + (sizeof(PSX::TextureGroup) * texGroups.size());
+
+		// Second pass: now offAnimData is known
+		for (auto& [quadFace, animTexOffset] : quadFaceToAnimOffset)
+		{
+			m_quadblocks[quadFace.first].SetAnimTextureOffset(animTexOffset, offAnimData, quadFace.second);
+		}
+
+		animPtrMapOffsets.push_back(animData.size());
+		size_t offEndAnimData = animData.size();
 		for (size_t i = 0; i < sizeof(uint32_t); i++) { animData.push_back(0); }
-		memcpy(&animData[0], &offAnimData, sizeof(uint32_t));
-		animPtrMapOffsets.push_back(0);
+		memcpy(&animData[offEndAnimData], &offAnimData, sizeof(uint32_t));
 	}
 	else
 	{
@@ -1577,7 +1655,7 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 
 	std::vector<uint32_t> visibleQuadsAll(visQuadSize, 0xFFFFFFFF);
 	size_t quadIndex = 0;
-	const bool validVisTree = !m_bspVis.IsEmpty();
+	const bool validVisTree = m_genVisTree && !m_bspVis.IsEmpty();
 	const std::vector<const BSP*> bspLeaves = m_bsp.GetLeaves();
 	std::unordered_map<size_t, const BSP*> idToLeaf;
 	std::unordered_map<const BSP*, size_t> leafToMatrix;
