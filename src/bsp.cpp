@@ -48,7 +48,7 @@ void BSP::PopulateBranch(PSX::BSPBranch& branch, std::vector<BSP*>& bspArray, si
 	m_flags = branch.flag;
 	if (branch.leftChild != BSPID::EMPTY)
 	{
-		uint16_t leftId = branch.leftChild & ~BSPID::LEAF;
+		uint16_t leftId = branch.leftChild & (BSPID::LEAF-1);
 		if (leftId < bspArray.size())
 		{
 			m_left = bspArray[leftId];
@@ -57,7 +57,7 @@ void BSP::PopulateBranch(PSX::BSPBranch& branch, std::vector<BSP*>& bspArray, si
 	}
 	if (branch.rightChild != BSPID::EMPTY)
 	{
-		uint16_t rightId = branch.rightChild & ~BSPID::LEAF;
+		uint16_t rightId = branch.rightChild & (BSPID::LEAF - 1);
 		if (rightId < bspArray.size())
 		{
 			m_right = bspArray[rightId];

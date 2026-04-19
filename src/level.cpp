@@ -1107,6 +1107,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		{
 			PSX::BSPBranch branch = {};
 			Read(file, branch);
+			if (branch.unk2 != 0 || branch.unk3 != 0) { printf("Branch ID%d has child 3\n", branch.id); }
 			bspArray[branch.id]->PopulateBranch(branch, bspArray, meshInfo.numBSPNodes);
 		}
 	}
@@ -1119,6 +1120,14 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		else { m_bsp.Clear(); }
 	}
 	else { m_bsp.Clear(); }
+	std::set<size_t> validID;
+	
+	printf("BSP ARRAY SIZE : %d\n", bspArray.size());
+	std::vector<const BSP*> tree = m_bsp.GetTree();
+	printf("BSP TREE SIZE : %d\n", tree.size());
+	for (const BSP* bsp : tree) { validID.insert(bsp->GetId()); }
+	for (BSP* bsp : bspArray) { if (!validID.contains(bsp->GetId())) { printf("ID %d isn't in tree\n", bsp->GetId()); } }
+	
 
 
 	// Load VisTree
