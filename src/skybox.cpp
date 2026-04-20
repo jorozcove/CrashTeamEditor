@@ -10,6 +10,7 @@
 #include <cstring>
 #include <cmath>
 #include <cstdio>
+#include <array>
 
 bool Skybox::LoadOBJ(const std::filesystem::path& path)
 {
@@ -112,29 +113,34 @@ bool Skybox::LoadFromPSX(const PSX::Skybox& psxHeader, const std::vector<PSX::Sk
 	}
 	oss << "\n";
 
-	// Faces use the first non-empty segment as canonical source.l.
-	const std::vector<uint16_t>* canonicalIndices = nullptr;
+	// Collect all unique faces across all segments
+	std::vector<std::array<uint16_t, 3>> uniqueFaces;
+	std::set<std::array<uint16_t, 3>> seenFaces;
+
 	for (const auto& seg : segmentIndices)
 	{
-		if (!seg.empty()) { canonicalIndices = &seg; break; }
+		const size_t faceCount = seg.size() / PSX::SKYBOX_FACE_STRIDE;
+		for (size_t i = 0; i < faceCount; i++)
+		{
+			const size_t base = i * PSX::SKYBOX_FACE_STRIDE;
+			std::array<uint16_t, 3> face = {
+				seg[base + 0],
+				seg[base + 1],
+				seg[base + 2]
+				// [base + 3] is padding, ignored
+			};
+			if (seenFaces.insert(face).second)  // true if newly inserted
+			{
+				uniqueFaces.push_back(face);
+			}
+		}
 	}
 
-	if (!canonicalIndices) { return false; }
-
-	// Each face: SKYBOX_FACE_STRIDE uint16_t values = 3 byte offsets + 1 padding
-	// Convert byte offsets back to OBJ vertex indices
-	const size_t faceCount = canonicalIndices->size() / PSX::SKYBOX_FACE_STRIDE;
-	for (size_t i = 0; i < faceCount; i++)
+	for (const auto& face : uniqueFaces)
 	{
-		const size_t base = i * PSX::SKYBOX_FACE_STRIDE;
-		const uint16_t offA = (*canonicalIndices)[base + 0];
-		const uint16_t offB = (*canonicalIndices)[base + 1];
-		const uint16_t offC = (*canonicalIndices)[base + 2];
-
-		const int idxA = static_cast<int>(offA / sizeof(PSX::SkyboxVertex)) + 1;
-		const int idxB = static_cast<int>(offB / sizeof(PSX::SkyboxVertex)) + 1;
-		const int idxC = static_cast<int>(offC / sizeof(PSX::SkyboxVertex)) + 1;
-
+		const int idxA = static_cast<int>(face[0] / sizeof(PSX::SkyboxVertex)) + 1;
+		const int idxB = static_cast<int>(face[1] / sizeof(PSX::SkyboxVertex)) + 1;
+		const int idxC = static_cast<int>(face[2] / sizeof(PSX::SkyboxVertex)) + 1;
 		oss << "f " << idxA << " " << idxB << " " << idxC << "\n";
 	}
 
@@ -159,20 +165,6 @@ void Skybox::DistributeFaces(std::vector<std::vector<uint16_t>>& segments) const
 	{
 		segments[seg] = m_indexBuffer;
 	}
-
-	// Distribute faces evenly across segments (this is not perfect)
-	// size_t facesPerSegment = faces.size() / PSX::NUM_SKYBOX_SEGMENTS;
-	// size_t remainder = faces.size() % PSX::NUM_SKYBOX_SEGMENTS;
-	// size_t faceIndex = 0;
-
-	// for (size_t seg = 0; seg < PSX::NUM_SKYBOX_SEGMENTS; seg++)
-	// {
-	// 	size_t count = facesPerSegment + (seg < remainder ? 1 : 0);
-	// 	for (size_t i = 0; i < count && faceIndex < faces.size(); i++, faceIndex++)
-	// 	{
-	// 		segments[seg].push_back(faces[faceIndex]);
-	// 	}
-	// }
 }
 
 std::vector<uint8_t> Skybox::Serialize(size_t baseOffset, std::vector<size_t>& ptrMapOffsets) const
