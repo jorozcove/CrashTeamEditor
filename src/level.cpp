@@ -205,7 +205,12 @@ bool Level::GenerateVisTreeAlone(bool simpleVisTree, float distanceNearClip, flo
 {
 	if (m_bsp.IsValid())
 	{
-		m_bspVis = GenerateVisTree(m_quadblocks, &m_bsp, simpleVisTree, distanceNearClip, distanceFarClip);
+		VisTreeSettings settings;
+		settings.farClipDistance = distanceFarClip;
+		settings.nearClipDistance = distanceNearClip;
+		settings.centerOnlySamples = simpleVisTree; 
+		settings.commutativeRays = false;
+		m_bspVis = GenerateVisTree(m_quadblocks, &m_bsp, settings);
 		return true;
 	}
 	return false;
