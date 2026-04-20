@@ -202,6 +202,17 @@ bool Level::GenerateBSP()
 	return false;
 }
 
+
+bool Level::GenerateVisTreeAlone(bool simpleVisTree, float distanceNearClip, float distanceFarClip)
+{
+	if (m_bsp.IsValid())
+	{
+		m_bspVis = GenerateVisTree(m_quadblocks, &m_bsp, simpleVisTree, distanceNearClip, distanceFarClip);
+		return true;
+	}
+	return false;
+}
+
 bool Level::GenerateCheckpoints()
 {
 	if (m_checkpointPaths.empty()) { return false; }
