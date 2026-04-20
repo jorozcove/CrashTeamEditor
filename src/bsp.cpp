@@ -9,6 +9,9 @@ BSP::BSP()
 {
 	m_parent = nullptr;
 	m_id = g_id++;
+	m_idFlag = 0;
+	m_leftFlag = 0;
+	m_rightFlag = 0;
 	m_node = BSPNode::BRANCH;
 	m_axis = AxisSplit::NONE;
 	m_flags = BSPFlags::NONE;
@@ -23,6 +26,9 @@ BSP::BSP(BSPNode type, const std::vector<size_t>& quadblockIndexes, BSP* parent,
 	bool isLeaf = type == BSPNode::LEAF;
 	m_parent = parent;
 	m_id = g_id++;
+	m_idFlag = 0;
+	m_leftFlag = 0;
+	m_rightFlag = 0;
 	m_node = type;
 	m_axis = AxisSplit::NONE;
 	m_flags = isLeaf ? BSPFlags::LEAF : BSPFlags::NONE;
@@ -53,6 +59,7 @@ void BSP::PopulateBranch(PSX::BSPBranch& branch, std::vector<BSP*>& bspArray, si
 		{
 			m_left = bspArray[leftId];
 			m_left->SetParent(this);
+			m_leftFlag = branch.leftChild - leftId;
 		}
 	}
 	if (branch.rightChild != BSPID::EMPTY)
@@ -62,6 +69,7 @@ void BSP::PopulateBranch(PSX::BSPBranch& branch, std::vector<BSP*>& bspArray, si
 		{
 			m_right = bspArray[rightId];
 			m_right->SetParent(this);
+			m_rightFlag = branch.rightChild - rightId;
 		}
 	}
 	m_bbox = BoundingBox();
@@ -389,14 +397,14 @@ std::vector<uint8_t> BSP::SerializeBranch() const
 	}
 	if (m_left)
 	{
-		branch.leftChild = static_cast<uint16_t>(m_left->m_id);
-		if (!m_left->IsBranch()) { branch.leftChild |= BSPID::LEAF; }
+		branch.leftChild = static_cast<uint16_t>(m_left->m_id) + static_cast<uint16_t>(m_leftFlag);
+		if (!m_left->IsBranch() && m_leftFlag == 0) { branch.leftChild |= BSPID::LEAF; }
 	}
 	else { branch.leftChild = BSPID::EMPTY; }
 	if (m_right)
 	{
-		branch.rightChild = static_cast<uint16_t>(m_right->m_id);
-		if (!m_right->IsBranch()) { branch.rightChild |= BSPID::LEAF; }
+		branch.rightChild = static_cast<uint16_t>(m_right->m_id) + static_cast<uint16_t>(m_rightFlag);
+		if (!m_right->IsBranch() && m_rightFlag == 0) { branch.rightChild |= BSPID::LEAF; }
 	}
 	else { branch.rightChild = BSPID::EMPTY; }
 	branch.unk1 = 0x00;

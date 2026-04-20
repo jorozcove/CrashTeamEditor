@@ -72,11 +72,14 @@ private:
 
 private:
 	size_t m_id;
+	size_t m_idFlag;
 	BSPNode m_node;
 	AxisSplit m_axis;
 	uint16_t m_flags;
 	BSP* m_left;
+	size_t m_leftFlag;
 	BSP* m_right;
+	size_t m_rightFlag;
 	BSP* m_parent;
 	BoundingBox m_bbox;
 	std::vector<size_t> m_quadblockIndexes;
