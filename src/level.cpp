@@ -73,7 +73,7 @@ void Level::Clear(bool clearErrors)
 	m_animTextures.clear();
 	m_rendererQueryPoint = Vec3();
 	m_rendererSelectedQuadblockIndexes.clear();
-	m_genVisTree = false;
+	//m_genVisTree = false;
 	m_bspVis.Clear();
 	m_maxQuadPerLeaf = 31;
 	m_maxLeafAxisLength = 64.0f;
@@ -193,7 +193,6 @@ bool Level::GenerateBSP()
 	if (m_bsp.IsValid())
 	{
 		GenerateRenderBspData();
-		if (m_genVisTree) { m_bspVis = GenerateVisTree(m_quadblocks, &m_bsp, m_visTreeSettings); }
 		return true;
 	}
 	m_bsp.Clear();
@@ -201,7 +200,7 @@ bool Level::GenerateBSP()
 }
 
 
-bool Level::GenerateVisTreeAlone(bool simpleVisTree, float distanceNearClip, float distanceFarClip)
+bool Level::GenerateVisTreeOnly(bool simpleVisTree, float distanceNearClip, float distanceFarClip)
 {
 	if (m_bsp.IsValid())
 	{
@@ -211,6 +210,17 @@ bool Level::GenerateVisTreeAlone(bool simpleVisTree, float distanceNearClip, flo
 		settings.centerOnlySamples = simpleVisTree; 
 		settings.commutativeRays = false;
 		m_bspVis = GenerateVisTree(m_quadblocks, &m_bsp, settings);
+		return true;
+	}
+	return false;
+}
+
+
+bool Level::GenerateVisTreeOnly()
+{
+	if (m_bsp.IsValid())
+	{
+		m_bspVis = GenerateVisTree(m_quadblocks, &m_bsp, m_visTreeSettings);
 		return true;
 	}
 	return false;
@@ -1678,7 +1688,7 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 
 	std::vector<uint32_t> visibleQuadsAll(visQuadSize, 0xFFFFFFFF);
 	size_t quadIndex = 0;
-	const bool validVisTree = m_genVisTree && !m_bspVis.IsEmpty();
+	const bool validVisTree = !m_bspVis.IsEmpty();
 	const std::vector<const BSP*> bspLeaves = m_bsp.GetLeaves();
 	std::unordered_map<size_t, const BSP*> idToLeaf;
 	std::unordered_map<const BSP*, size_t> leafToMatrix;

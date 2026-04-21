@@ -796,6 +796,7 @@ void Level::RenderUI(Renderer& renderer)
 
 			static std::string buttonMessage;
 			static ButtonUI generateBSPButton = ButtonUI();
+			static ButtonUI generateVisTreeButton = ButtonUI();
 			if (ImGui::TreeNode("Advanced"))
 			{
 				if (ImGui::TreeNodeEx("BSP Settings", ImGuiTreeNodeFlags_DefaultOpen))
@@ -809,9 +810,6 @@ void Level::RenderUI(Renderer& renderer)
 				}
 				if (ImGui::TreeNodeEx("Vis Tree Settings", ImGuiTreeNodeFlags_DefaultOpen))
 				{
-					ImGui::Checkbox("Generate Vis Tree", &m_genVisTree);
-					ImGui::SetItemTooltip("Generating the vis tree may take several minutes, but the gameplay will be more performant.");
-					ImGui::BeginDisabled(!m_genVisTree);
 					if (ImGui::InputFloat("Near Clip Distance", &m_visTreeSettings.nearClipDistance)) { m_visTreeSettings.nearClipDistance = std::max(m_visTreeSettings.nearClipDistance, -1.0f); }
 					ImGui::SetItemTooltip("Minimum drawing distance. Higher values decrease performance and speed up the vis tree generation.");
 					if (ImGui::InputFloat("Far Clip Distance", &m_visTreeSettings.farClipDistance)) { m_visTreeSettings.farClipDistance = std::max(m_visTreeSettings.farClipDistance, 0.0f); }
@@ -820,16 +818,21 @@ void Level::RenderUI(Renderer& renderer)
 					ImGui::SetItemTooltip("Speeds up VisTree generation by a factor of 2x to 3x with minimal loss of precision.");
 					ImGui::Checkbox("Center-Only Samples", &m_visTreeSettings.centerOnlySamples);
 					ImGui::SetItemTooltip("Only casts rays from each quad center (skips corner samples). Much faster, but may miss narrow visibility paths.");
-					ImGui::EndDisabled();
 					ImGui::TreePop();
 				}
 				ImGui::TreePop();
 			}
-			if (generateBSPButton.Show("Generate", buttonMessage, false))
+			if (generateBSPButton.Show("Generate BSP", buttonMessage, false))
 			{
 				if (GenerateBSP()) { buttonMessage = "Successfully generated the BSP tree."; }
 				else { buttonMessage = "Failed generating the BSP tree."; }
 			}
+			if (generateVisTreeButton.Show("Generate VisTree", buttonMessage, false))
+			{
+				if (GenerateVisTreeOnly()) { buttonMessage = "Successfully generated the VisTree."; }
+				else { buttonMessage = "Failed generating the VisTree."; }
+			}
+			ImGui::SetItemTooltip("Generating the vis tree may take several minutes, but the gameplay will be more performant.");
 		}
 		ImGui::End();
 	}

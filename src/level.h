@@ -67,7 +67,8 @@ public:
 	void ResetRendererSelection();
 	void UpdateRenderCheckpointData();
 	void GenerateRenderLevData();
-	bool GenerateVisTreeAlone(bool simpleVisTree, float distanceNearClip, float distanceFarClip);
+	bool GenerateVisTreeOnly(bool simpleVisTree, float distanceNearClip, float distanceFarClip);
+	bool GenerateVisTreeOnly();
 
 private:
 	void ManageTurbopad(Quadblock& quadblock);
@@ -103,7 +104,6 @@ private:
 	bool m_showLogWindow;
 	bool m_showHotReloadWindow;
 	bool m_loaded;
-	bool m_genVisTree;
 	int m_maxQuadPerLeaf;
 	float m_maxLeafAxisLength;
 	VisTreeSettings m_visTreeSettings;

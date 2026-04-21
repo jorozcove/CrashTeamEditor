@@ -13,7 +13,7 @@ struct VisTreeSettings
 	bool commutativeRays;
 	float nearClipDistance;
 	float farClipDistance;
-	VisTreeSettings() : centerOnlySamples(false), commutativeRays(false), nearClipDistance(-1.0f), farClipDistance(1000.0f) {}
+	VisTreeSettings() : centerOnlySamples(true), commutativeRays(false), nearClipDistance(-1.0f), farClipDistance(1000.0f) {}
 };
 
 class BitMatrix
