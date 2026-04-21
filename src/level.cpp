@@ -1197,7 +1197,20 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 
 				// Skip if we already processed this exact bitfield
 				// (another quadblock in the same leaf will share the same offset)
-				if (processedOffsets.count(visSet.offVisibleBSPNodes)) { continue; }
+				if (processedOffsets.count(visSet.offVisibleBSPNodes))
+				{
+					// Still need to copy the already-decoded row to this leaf's source index
+					size_t sourceBspId = m_quadblocks[q].GetBSPID() & ~BSPID::LEAF;
+					auto it = leafIdToMatrix.find(sourceBspId);
+					if (it == leafIdToMatrix.end()) { continue; }
+					size_t sourceIdx = it->second;
+					size_t alreadyDecodedIdx = processedOffsets.at(visSet.offVisibleBSPNodes);
+					for (size_t i = 0; i < bspLeaves.size(); i++)
+					{
+						m_bspVis.Set(m_bspVis.Get(alreadyDecodedIdx, i), sourceIdx, i);
+					}
+					continue;
+				}
 
 				size_t sourceBspId = m_quadblocks[q].GetBSPID() & ~BSPID::LEAF;
 				auto it = leafIdToMatrix.find(sourceBspId);
@@ -1676,6 +1689,8 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 
 	constexpr size_t BITS_PER_SLOT = sizeof(uint32_t) * 8;
 	std::vector<std::tuple<std::vector<uint32_t>, size_t>> visibleNodes;
+	std::vector<std::vector<uint32_t>> uniqueVisNodes;
+	std::map<std::vector<uint32_t>, size_t> visNodesOffsetMap;
 	std::vector<std::tuple<std::vector<uint32_t>, size_t>> visibleQuads;
 	std::vector<std::tuple<std::vector<uint32_t>, size_t>> visibleInstances;
 	size_t visNodeSize = static_cast<size_t>(std::ceil(static_cast<float>(bspNodes.size()) / static_cast<float>(BITS_PER_SLOT)));
@@ -1717,15 +1732,25 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 					}
 				}
 			}
-			visibleNodes.push_back({visNodes, currOffset});
-			currOffset += visNodes.size() * sizeof(uint32_t);
+			if (visNodesOffsetMap.contains(visNodes))
+			{
+				visibleNodes.push_back({ visNodes, visNodesOffsetMap.at(visNodes) });
+			}
+			else
+			{
+				visNodesOffsetMap[visNodes] = currOffset;
+				visibleNodes.push_back({ visNodes, currOffset });
+				uniqueVisNodes.push_back(visNodes);
+				currOffset += visNodes.size() * sizeof(uint32_t);
+			}
 		}
 		quadIndex++;
 	}
-
+	printf("visibleNodesOffsetMapSize %d\n", visNodesOffsetMap.size());
 	if (!validVisTree)
 	{
 		visibleNodes.push_back({visibleNodeAll, currOffset});
+		uniqueVisNodes.push_back(visibleNodeAll);
 		currOffset += visibleNodeAll.size() * sizeof(uint32_t);
 	}
 
@@ -1762,7 +1787,7 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 		PSX::Quadblock* serializedQuad = reinterpret_cast<PSX::Quadblock*>(serializedQuads[quadCount].data());
 		serializedQuad->offVisibleSet = static_cast<uint32_t>(offVisibleSet + sizeof(PSX::VisibleSet) * visibleSetIndex);
 	}
-
+	printf("visibleSetsSize %d\n", visibleSets.size());
 	currOffset += visibleSets.size() * sizeof(PSX::VisibleSet);
 
 	const size_t offVertices = currOffset;
@@ -1964,10 +1989,9 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 	Write(file, texGroups.data(), texGroups.size() * sizeof(PSX::TextureGroup));
 	if (!animData.empty()) { Write(file, animData.data(), animData.size()); }
 	for (const std::vector<uint8_t>& serializedQuad : serializedQuads) { Write(file, serializedQuad.data(), serializedQuad.size()); }
-	for (const auto& tuple : visibleNodes)
+	for (const auto& visNode : uniqueVisNodes)
 	{
-		const std::vector<uint32_t>& visibleNode = std::get<0>(tuple);
-		Write(file, visibleNode.data(), visibleNode.size() * sizeof(uint32_t));
+		Write(file, visNode.data(), visNode.size() * sizeof(uint32_t));
 	}
 	for (const auto& tuple : visibleQuads)
 	{
