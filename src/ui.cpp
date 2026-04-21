@@ -56,13 +56,23 @@ void UI::MainMenu()
 					else { m_rend.SetCameraToLevelSpawn(m_lev.m_spawn[1].pos, m_lev.m_spawn[1].rot); }
 				}
 			}
-			if (ImGui::MenuItem("Save", nullptr, nullptr, m_lev.IsLoaded()))
+			if (ImGui::MenuItem("Save LEV + VRM", nullptr, nullptr, m_lev.IsLoaded()))
 			{
 				auto selection = pfd::select_folder("Level Folder", m_lev.GetParentPath().string(), pfd::opt::force_path).result();
 				if (!selection.empty())
 				{
 					const std::filesystem::path path = selection + "\\";
-					m_lev.Save(path);
+					m_lev.SaveLEV(path, false);
+				}
+			}
+
+			if (ImGui::MenuItem("Save LEV only", nullptr, nullptr, m_lev.IsLoaded() && m_lev.HasRawTexture()))
+			{
+				auto selection = pfd::select_folder("Level Folder", m_lev.GetParentPath().string(), pfd::opt::force_path).result();
+				if (!selection.empty())
+				{
+					const std::filesystem::path path = selection + "\\";
+					m_lev.SaveLEV(path, true);
 				}
 			}
 

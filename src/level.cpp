@@ -30,7 +30,7 @@ bool Level::Load(const std::filesystem::path& filename)
 
 bool Level::Save(const std::filesystem::path& path)
 {
-	return SaveLEV(path);
+	return false;// SaveLEV(path);
 }
 
 bool Level::IsLoaded() const
@@ -767,6 +767,8 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	std::ifstream file(levFile, std::ios::binary);
 	if (!file.is_open()) return false;
 
+	m_hasRawTexture = true;
+
 	m_parentPath = levFile.parent_path();
 	m_name = levFile.filename().replace_extension().string() + "_edit";
 
@@ -784,11 +786,6 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		uint32_t pointer;
 		Read(file, pointer);
 		pointerMap.insert(pointer);
-	}
-	printf("Pointer Map Content\n");
-	for (uint32_t ptr : pointerMap)
-	{
-		//printf("0x%x\n", ptr);
 	}
 
 	file.seekg(offLev);
@@ -1176,61 +1173,29 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 
 			const size_t visNodeSize = (bspNodes.size() + 31) / 32;
 
-			// Build a map from offVisibleBSPNodes -> already-processed sourceIdx
-			// so duplicate VisibleSets (shared across quadblocks in the same leaf)
-			// are only read and decoded once.
-			std::unordered_map<uint32_t, size_t> processedOffsets;
-
 			for (size_t q = 0; q < m_quadblocks.size(); q++)
 			{
-				// Each serialized PSX::Quadblock carries its own offVisibleSet.
-				// Read it back from the quadblock data we already loaded.
 				uint32_t offVisibleSet = quadblocksVisibleSetOff[q];
 				if (offVisibleSet == 0) { continue; }
-
-				// Read the VisibleSet struct for this quadblock
 				PSX::VisibleSet visSet = {};
 				file.seekg(offLev + static_cast<std::streamoff>(offVisibleSet));
 				Read(file, visSet);
-
 				if (visSet.offVisibleBSPNodes == 0) { continue; }
 
-				// Skip if we already processed this exact bitfield
-				// (another quadblock in the same leaf will share the same offset)
-				if (processedOffsets.count(visSet.offVisibleBSPNodes))
-				{
-					// Still need to copy the already-decoded row to this leaf's source index
-					size_t sourceBspId = m_quadblocks[q].GetBSPID() & ~BSPID::LEAF;
-					auto it = leafIdToMatrix.find(sourceBspId);
-					if (it == leafIdToMatrix.end()) { continue; }
-					size_t sourceIdx = it->second;
-					size_t alreadyDecodedIdx = processedOffsets.at(visSet.offVisibleBSPNodes);
-					for (size_t i = 0; i < bspLeaves.size(); i++)
-					{
-						m_bspVis.Set(m_bspVis.Get(alreadyDecodedIdx, i), sourceIdx, i);
-					}
-					continue;
-				}
+				size_t leafID = m_quadblocks[q].GetBSPID() & ~BSPID::LEAF;
+				if (!leafIdToMatrix.contains(leafID)) { continue; }
+				size_t visTreeID = leafIdToMatrix[leafID];
 
-				size_t sourceBspId = m_quadblocks[q].GetBSPID() & ~BSPID::LEAF;
-				auto it = leafIdToMatrix.find(sourceBspId);
-				if (it == leafIdToMatrix.end()) { continue; }
-				size_t sourceIdx = it->second;
-
-				processedOffsets[visSet.offVisibleBSPNodes] = sourceIdx;
-
-				// Read the visibility bitfield for this leaf
 				file.seekg(offLev + static_cast<std::streamoff>(visSet.offVisibleBSPNodes));
 				std::vector<uint32_t> visNodes(visNodeSize);
 				for (size_t i = 0; i < visNodeSize; i++) { Read(file, visNodes[i]); }
 
-				// Decode visible destination leaves
 				for (size_t i = 0; i < bspLeaves.size(); i++)
 				{
 					size_t destBspId = bspLeaves[i]->GetId();
 					uint32_t word = visNodes[destBspId / 32];
 					uint32_t bit = 1u << (31 - (destBspId % 32));
-					if (word & bit) { m_bspVis.Set(true, sourceIdx, i); }
+					if (word & bit) { m_bspVis.Set(true, visTreeID, i); }
 				}
 			}
 		}
@@ -1321,12 +1286,8 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	return true;
 }
 
-bool Level::SaveLEV(const std::filesystem::path& path)
+bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 {
-
-	bool useRawTextures = true;
-
-
 	/*
 	*	Serialization order:
 	*		- offMap
@@ -2029,6 +1990,8 @@ bool Level::LoadOBJ(const std::filesystem::path& objFile)
 	std::ifstream file(objFile);
 	m_name = objFile.filename().replace_extension().string();
 	m_parentPath = objFile.parent_path();
+
+	m_hasRawTexture = false;
 
 	bool ret = true;
 	std::unordered_map<std::string, std::vector<Tri>> triMap;

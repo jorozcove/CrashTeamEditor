@@ -43,6 +43,7 @@ class Level
 public:
 	bool Load(const std::filesystem::path& filename);
 	bool Save(const std::filesystem::path& path);
+	bool SaveLEV(const std::filesystem::path& path, bool useRawTexture);
 	bool IsLoaded() const;
 	void Clear(bool clearErrors);
 	const std::string& GetName() const;
@@ -69,11 +70,11 @@ public:
 	void GenerateRenderLevData();
 	bool GenerateVisTreeOnly(bool simpleVisTree, float distanceNearClip, float distanceFarClip);
 	bool GenerateVisTreeOnly();
+	bool HasRawTexture() const { return m_hasRawTexture; }
 
 private:
 	void ManageTurbopad(Quadblock& quadblock);
 	bool LoadLEV(const std::filesystem::path& levFile);
-	bool SaveLEV(const std::filesystem::path& path);
 	bool LoadOBJ(const std::filesystem::path& objFile);
 	bool StartEmuIPC(const std::string& emulator);
 	bool HotReload(const std::string& levPath, const std::string& vrmPath, const std::string& emulator);
@@ -135,6 +136,7 @@ private:
 	std::vector<uint8_t> m_vrm;
 	Skybox m_skybox;
 
+	bool m_hasRawTexture;
 	std::unordered_map<uint32_t, PSX::TextureGroup> m_rawTextureGroup;
 	std::unordered_map<uint32_t, PSX::AnimTex> m_rawAnimTex;
 	std::unordered_map<uint32_t, std::vector<uint32_t>> m_rawAnimTexFrames;
