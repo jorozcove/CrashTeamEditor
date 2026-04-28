@@ -329,6 +329,12 @@ namespace PSX
 		uint32_t offBSP[MAX_NUM_PLAYERS]; // 0x20
 	};
 
+
+	struct levAINavTable
+	{
+		uint32_t offAIPathArray[3];
+	};
+
 	struct NavHeader
 	{
 		uint16_t magic;
@@ -337,6 +343,19 @@ namespace PSX
 		uint32_t offLastPoint;
 		uint16_t physUnk[0x20];
 	};
+
+	struct NavFrame // total size : 0x14
+	{
+		PSX::Vec3 pos; // 0x0
+		int8_t rot[4]; // 0x6
+		int16_t unk2[2]; // 0xA
+		uint16_t flags; //0xE
+		int16_t pathChangeOpCode; //0x10
+		uint8_t goBackCount; // 0x12
+		uint8_t specialBits; // 0x13
+	};
+
+
 
 	static constexpr size_t NUM_SKYBOX_SEGMENTS = 8;
 	static constexpr size_t SKYBOX_FACE_STRIDE = 4; // 3 vertex offsets + 1 padding per face
@@ -394,27 +413,28 @@ struct std::hash<PSX::VisibleSet>
 static constexpr int16_t FP_ONE = 0x1000;
 static constexpr int16_t FP_ONE_GEO = 64;
 static constexpr int16_t FP_ONE_CP = 8;
+static constexpr int16_t FP_ONE_ROT = 256;
 
 static inline int16_t ConvertFloat(float x, int16_t one = FP_ONE) { return static_cast<int16_t>(std::round(x * static_cast<float>(one))); };
-static inline int16_t ConvertAngle(float x) { return static_cast<int16_t>(std::round((x * static_cast<float>(FP_ONE)) / 360.0f)); }
+static inline int16_t ConvertAngle(float x, int16_t one = FP_ONE) { return static_cast<int16_t>(std::round((x * static_cast<float>(FP_ONE)) / 360.0f)); }
 static inline float ConvertFP(int16_t fp, int16_t one = FP_ONE) { return static_cast<float>(fp) / static_cast<float>(one); }
-static inline float ConvertFPAngle(int16_t fp) { return (static_cast<float>(fp) * 360.0f) / static_cast<float>(FP_ONE); }
+static inline float ConvertFPAngle(int16_t fp, int16_t one = FP_ONE) { return (static_cast<float>(fp) * 360.0f) / static_cast<float>(FP_ONE); }
 
-static inline PSX::Vec3 ConvertAngle(const Vec3& v)
+static inline PSX::Vec3 ConvertAngle(const Vec3& v, int16_t one = FP_ONE)
 {
 	PSX::Vec3 out = {};
-	out.x = ConvertAngle(v.x);
-	out.y = ConvertAngle(v.y);
-	out.z = ConvertAngle(v.z);
+	out.x = ConvertAngle(v.x, one);
+	out.y = ConvertAngle(v.y, one);
+	out.z = ConvertAngle(v.z, one);
 	return out;
 }
 
-static inline Vec3 ConvertPSXAngle(const PSX::Vec3& v)
+static inline Vec3 ConvertPSXAngle(const PSX::Vec3& v, int16_t one = FP_ONE)
 {
 	Vec3 out = {};
-	out.x = ConvertFPAngle(v.x);
-	out.y = ConvertFPAngle(v.y);
-	out.z = ConvertFPAngle(v.z);
+	out.x = ConvertFPAngle(v.x, one);
+	out.y = ConvertFPAngle(v.y, one);
+	out.z = ConvertFPAngle(v.z, one);
 	return out;
 }
 

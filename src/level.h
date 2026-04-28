@@ -13,6 +13,7 @@
 #include "model.h"
 #include "vistree.h"
 #include "skybox.h"
+#include "bots.h"
 
 #include <nlohmann/json.hpp>
 #include <vector>
@@ -135,6 +136,7 @@ private:
 	BitMatrix m_bspVis;
 	std::vector<uint8_t> m_vrm;
 	Skybox m_skybox;
+	BotPath m_botPaths[3];
 
 	bool m_hasRawTexture;
 	std::unordered_map<uint32_t, PSX::TextureGroup> m_rawTextureGroup;

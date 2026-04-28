@@ -86,6 +86,10 @@ void Level::Clear(bool clearErrors)
 	m_skybox.Clear();
 	m_splitLines[0] = 0.0;
 	m_splitLines[1] = 0.0;
+	for (int i = 0; i < 3; i++)
+	{
+		m_botPaths[i].Clear();
+	}
 
 	for (Model* model : m_models)
 	{
@@ -1280,6 +1284,39 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		}
 	}
 
+	if (header.offLevNavTable != 0)
+	{
+		//printf("off Lev Nav Table : 0x%x\n", header.offLevNavTable);
+		file.seekg(offLev + std::streampos(header.offLevNavTable));
+		PSX::levAINavTable navTable{};
+		Read(file, navTable);
+		for (int i = 0; i < 3; i++)
+		{
+			if (navTable.offAIPathArray[i] != 0)
+			{
+				//printf("off AI Path Array %d : 0x%x\n", i, navTable.offAIPathArray[i]);
+				file.seekg(offLev + std::streampos(navTable.offAIPathArray[i]));
+				PSX::NavHeader navHeader{};
+				Read(file, navHeader);
+
+				std::vector<PSX::NavFrame> nodes;
+				PSX::NavFrame startLine{};
+				Read(file, startLine);
+				nodes.push_back(startLine);
+				for (int j = 0; j < navHeader.numPoints; j++)
+				{
+					PSX::NavFrame navFrame{};
+					Read(file, navFrame);
+					nodes.push_back(navFrame);
+					//printf("Pos %d : x=%d, y=%d, z=%d\n", j, navFrame.pos.x, navFrame.pos.y, navFrame.pos.z);
+					//printf("Rot %d : %d, %d, %d, %d\n", j, navFrame.rot[0], navFrame.rot[1], navFrame.rot[2], navFrame.rot[3]);
+				}
+				m_botPaths[i] = BotPath(navHeader, nodes);
+			}
+		}
+	}
+	
+
 	m_loaded = true;
 	file.close();
 	GenerateRenderLevData();
@@ -1306,6 +1343,8 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	*		- LevelExtraHeader
 	*		- NavHeaders
 	*		- VisMem
+	*		- Skybox
+	*		- AI Bot Path
 	*		- PointerMap
 	*/
 	m_hotReloadLevPath = path / (m_name + ".lev");
@@ -1828,7 +1867,6 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	const size_t offVisMem = currOffset;
 	currOffset += sizeof(visMem);
 
-	// Skybox data serialization
 	size_t offSkyboxData = 0;
 	std::vector<uint8_t> skyboxData;
 	std::vector<size_t> skyboxPtrMapOffsets;
@@ -1839,6 +1877,8 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 		skyboxData = m_skybox.Serialize(offSkyboxData, skyboxPtrMapOffsets);
 		currOffset += skyboxData.size();
 	}
+
+
 
 	const size_t offPointerMap = currOffset;
 
