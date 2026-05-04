@@ -150,6 +150,9 @@
     <ClCompile Include="src\vistree.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\bots.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="python_bindings\cte_bindings.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -243,6 +246,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\vistree.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\bots.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

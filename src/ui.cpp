@@ -24,6 +24,7 @@ bool Settings::w_bsp = false;
 bool Settings::w_renderer = false;
 bool Settings::w_ghost = false;
 bool Settings::w_python = false;
+bool Settings::w_bot = false;
 std::string Settings::m_lastOpenedFolder = ".";
 std::string Settings::m_lastOpenedScriptFolder = ".";
 

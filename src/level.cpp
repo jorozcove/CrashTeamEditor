@@ -122,6 +122,11 @@ std::vector<Path>& Level::GetCheckpointPaths()
 	return m_checkpointPaths;
 }
 
+std::vector<BotNode>& Level::GetBotPathLeft()
+{
+	return m_botPaths[0].GetNodes();
+}
+
 const std::filesystem::path& Level::GetParentPath() const
 {
 	return m_parentPath;
@@ -170,6 +175,11 @@ Model* Level::GetSpawnModel()
 Model* Level::GetCheckpointModel()
 {
 	return m_models[LevelModels::CHECKPOINT];
+}
+
+Model* Level::GetBotModel()
+{
+	return m_models[LevelModels::BOT];
 }
 
 Model* Level::GetSelectedModel()
@@ -228,6 +238,187 @@ bool Level::GenerateVisTreeOnly()
 		return true;
 	}
 	return false;
+}
+
+std::vector<Vec3> Level::NormalizePos(const std::vector<Vec3>& pos, float dist)
+{
+	if (pos.size() < 2 || dist <= 0.0f)
+		return pos;
+
+	// --- Step 1: Build a Catmull-Rom spline and sample it at a fine resolution
+	// to get an accurate arc-length parameterization of the path.
+	// We'll generate many densely-packed points along the spline first,
+	// then re-sample them at the requested uniform distance.
+
+	auto catmullRom = [](const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3, float t) -> Vec3
+		{
+			const float t2 = t * t;
+			const float t3 = t2 * t;
+			return (p1 * 2.0f
+				+ (p2 - p0) * t
+				+ (p0 * 2.0f - p1 * 5.0f + p2 * 4.0f - p3) * t2
+				+ (p1 * 3.0f - p0 - p2 * 3.0f + p3) * t3) * 0.5f;
+		};
+
+	// Clamp index to valid range, clamping endpoints for the phantom points
+	auto getPoint = [&](int i) -> const Vec3&
+		{
+			if (i < 0) i = 0;
+			if (i >= static_cast<int>(pos.size())) i = static_cast<int>(pos.size()) - 1;
+			return pos[i];
+		};
+
+	// Sample the spline densely — use enough steps per segment to not miss curvature
+	const int stepsPerSegment = 64;
+	std::vector<Vec3> denseSamples;
+	denseSamples.reserve(pos.size() * stepsPerSegment);
+
+	for (int i = 0; i < static_cast<int>(pos.size()) - 1; i++)
+	{
+		const Vec3& p0 = getPoint(i - 1);
+		const Vec3& p1 = getPoint(i);
+		const Vec3& p2 = getPoint(i + 1);
+		const Vec3& p3 = getPoint(i + 2);
+
+		for (int step = 0; step < stepsPerSegment; step++)
+		{
+			const float t = static_cast<float>(step) / static_cast<float>(stepsPerSegment);
+			denseSamples.push_back(catmullRom(p0, p1, p2, p3, t));
+		}
+	}
+	denseSamples.push_back(pos.back());
+
+	// --- Step 2: Re-sample the dense polyline at uniform arc-length intervals (dist)
+
+	std::vector<Vec3> result;
+	result.push_back(denseSamples.front());
+
+	float accumulated = 0.0f;
+
+	for (int i = 1; i < static_cast<int>(denseSamples.size()); i++)
+	{
+		const Vec3  segment = denseSamples[i] - denseSamples[i - 1];
+		const float segLen = segment.Length();
+
+		if (segLen == 0.0f)
+			continue;
+
+		float remaining = segLen;
+		float offset = 0.0f;
+
+		while (accumulated + remaining >= dist)
+		{
+			const float step = dist - accumulated;
+			offset += step;
+			remaining -= step;
+			accumulated = 0.0f;
+
+			const Vec3 dir = segment / segLen;
+			const Vec3 point = denseSamples[i - 1] + dir * offset;
+			result.push_back(point);
+		}
+
+		accumulated += remaining;
+	}
+
+	return result;
+}
+
+
+std::vector<Vec3> Level::LoadPath(const std::filesystem::path& path)
+{
+	std::ifstream file(path);
+	if (!file.is_open())
+		return {};
+
+	std::vector<Vec3>                        rawVertices;
+	std::unordered_map<int, int>             adjacency;   // edge map: from -> to (1-based)
+	bool                                     inFirstObject = false;
+
+	std::string line;
+	while (std::getline(file, line))
+	{
+		if (line.empty() || line[0] == '#')
+			continue;
+
+		std::istringstream ss(line);
+		std::string        token;
+		ss >> token;
+
+		if (token == "o")
+		{
+			// Only parse the first object
+			if (!inFirstObject)
+				inFirstObject = true;
+			else
+				break;
+		}
+		else if (token == "v" && inFirstObject)
+		{
+			float x, y, z;
+			ss >> x >> y >> z;
+			rawVertices.emplace_back(x, y, z);
+		}
+		else if (token == "l" && inFirstObject)
+		{
+			int a, b;
+			if (ss >> a >> b)
+				adjacency[a] = b;  // directed edge a -> b (OBJ indices are 1-based)
+		}
+	}
+
+	if (rawVertices.empty() || adjacency.empty())
+		return rawVertices;
+
+	// Find the start of the chain: a vertex that appears as a source but never as a destination
+	std::unordered_set<int> destinations;
+	for (auto& [from, to] : adjacency)
+		destinations.insert(to);
+
+	int start = -1;
+	for (auto& [from, to] : adjacency)
+	{
+		if (destinations.find(from) == destinations.end())
+		{
+			start = from;
+			break;
+		}
+	}
+
+	// Fallback: if it's a closed loop, just pick any start
+	if (start == -1 && !adjacency.empty())
+		start = adjacency.begin()->first;
+
+	// Walk the chain in edge order
+	std::vector<Vec3> ordered;
+	ordered.reserve(rawVertices.size());
+
+	int current = start;
+	while (adjacency.count(current))
+	{
+		// OBJ indices are 1-based
+		ordered.push_back(rawVertices[current - 1]);
+		int next = adjacency[current];
+		adjacency.erase(current);  // prevent infinite loops on malformed data
+		current = next;
+	}
+	// Push the final vertex (the chain end that has no outgoing edge)
+	if (current >= 1 && current <= static_cast<int>(rawVertices.size()))
+		ordered.push_back(rawVertices[current - 1]);
+
+	return ordered;
+}
+
+
+
+void Level::GenerateBotPathLeft()
+{
+	std::vector<Vec3> pos;
+	for (BotNode& node : m_botPaths[0].GetNodes())
+	{
+		pos.push_back(node.GetPos());
+	}
+	m_botPaths[0].GeneratePath(pos, m_quadblocks);
 }
 
 bool Level::GenerateCheckpoints()
@@ -1314,8 +1505,8 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 				m_botPaths[i] = BotPath(navHeader, nodes);
 			}
 		}
+		UpdateRenderBotData();
 	}
-	
 
 	m_loaded = true;
 	file.close();
@@ -1344,7 +1535,6 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	*		- NavHeaders
 	*		- VisMem
 	*		- Skybox
-	*		- AI Bot Path
 	*		- PointerMap
 	*/
 	m_hotReloadLevPath = path / (m_name + ".lev");
@@ -1843,10 +2033,19 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	currOffset += sizeof(extraHeader);
 
 	constexpr size_t BOT_PATH_COUNT = 3;
-	std::vector<PSX::NavHeader> navHeaders(BOT_PATH_COUNT);
+	PSX::levAINavTable navTable{};
+	std::vector<std::vector<uint8_t>> serializedBotPaths;
 
-	const size_t offNavHeaders = currOffset;
-	currOffset += navHeaders.size() * sizeof(PSX::NavHeader);
+	const size_t offNavTable = currOffset;
+	currOffset += sizeof(navTable);
+
+	for (int i = 0; i < BOT_PATH_COUNT; i++)
+	{
+		navTable.offAIPathArray[i] = currOffset;
+		serializedBotPaths.push_back(m_botPaths[i].Serialize());
+		currOffset += serializedBotPaths.back().size();
+	}
+
 
 	std::vector<uint32_t> visMemNodesP1(visNodeSize);
 	const size_t offVisMemNodesP1 = currOffset;
@@ -1904,7 +2103,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	header.numCheckpointNodes = static_cast<uint32_t>(m_checkpoints.size());
 	header.offCheckpointNodes = static_cast<uint32_t>(offCheckpoints);
 	header.offVisMem = static_cast<uint32_t>(offVisMem);
-	header.offLevNavTable = static_cast<uint32_t>(offNavHeaders);
+	header.offLevNavTable = static_cast<uint32_t>(offNavTable);
 
 	// Set skybox pointer in header if enabled
 	if (m_skybox.IsReady())
@@ -1982,6 +2181,11 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 		pointerMap.push_back(static_cast<uint32_t>(offset));
 	}
 
+	for (size_t i = 0; i < 3; i++)
+	{
+		pointerMap.push_back(CALCULATE_OFFSET(PSX::levAINavTable, offAIPathArray[i], offNavTable));
+	}
+
 	const size_t pointerMapBytes = pointerMap.size() * sizeof(uint32_t);
 
 	Write(file, &offPointerMap, sizeof(uint32_t));
@@ -2011,7 +2215,8 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	if (!m_tropyGhost.empty()) { Write(file, m_tropyGhost.data(), m_tropyGhost.size()); }
 	if (!m_oxideGhost.empty()) { Write(file, m_oxideGhost.data(), m_oxideGhost.size()); }
 	Write(file, &extraHeader, sizeof(extraHeader));
-	Write(file, navHeaders.data(), navHeaders.size() * sizeof(PSX::NavHeader));
+	Write(file, &navTable, sizeof(navTable));
+	for (const std::vector<uint8_t>& serializedBotPath : serializedBotPaths) { Write(file, serializedBotPath.data(), serializedBotPath.size()); }
 	Write(file, visMemNodesP1.data(), visMemNodesP1.size() * sizeof(uint32_t));
 	Write(file, visMemQuadsP1.data(), visMemQuadsP1.size() * sizeof(uint32_t));
 	Write(file, visMemBSPP1.data(), visMemBSPP1.size() * sizeof(uint32_t));
@@ -2607,6 +2812,9 @@ void Level::InitModels(Renderer& renderer)
 
 	m_models[LevelModels::SKYBOX] = m_models[LevelModels::LEVEL]->AddModel();
 	m_models[LevelModels::SKYBOX]->SetRenderCondition([]() { return GuiRenderSettings::showSkybox; });
+
+	m_models[LevelModels::BOT] = m_models[LevelModels::LEVEL]->AddModel();
+	m_models[LevelModels::BOT]->SetRenderCondition([]() { return GuiRenderSettings::showBots; });
 }
 
 void Level::GenerateRenderLevData()
@@ -2774,6 +2982,67 @@ void Level::UpdateRenderCheckpointData()
 	}
 
 	checkpointModel->GetMesh().SetGeometry(checkTriangles, Mesh::RenderFlags::DrawBackfaces | Mesh::RenderFlags::DontOverrideRenderFlags);
+}
+
+
+void Level::UpdateRenderBotData()
+{
+	Model* botModel = m_models[LevelModels::BOT];
+	if (!botModel) { return; }
+	botModel->ClearModels();
+
+	// Check if any path has nodes at all
+	bool anyNodes = false;
+	for (const BotPath& path : m_botPaths)
+		if (path.GetNodeCount() > 0) { anyNodes = true; break; }
+
+	if (!anyNodes)
+	{
+		botModel->GetMesh().Clear();
+		return;
+	}
+
+	// One fixed color per path (left, middle, right)
+	static const Color pathColors[3] =
+	{
+		Color(0.86f, 0.31f, 0.31f), // left  — red
+		Color(0.31f, 0.78f, 0.31f), // mid   — green
+		Color(0.31f, 0.51f, 0.86f), // right — blue
+	};
+
+	constexpr float labelHeightOffset = 1.5f;
+	std::vector<Primitive> botTriangles;
+
+	for (int pathIndex = 0; pathIndex < 3; pathIndex++)
+	{
+		const BotPath& path = m_botPaths[pathIndex];
+		const Color& c = pathColors[pathIndex % 3];
+
+		for (size_t nodeIndex = 0; nodeIndex < path.GetNodeCount(); nodeIndex++)
+		{
+			const BotNode& node = path.GetNode(nodeIndex);
+			const Vec3& pos = node.GetPos();
+
+			Vertex v = Vertex(Point(pos.x, pos.y, pos.z, c.r, c.g, c.b));
+			const std::vector<Primitive> tris = v.ToGeometry();
+			botTriangles.insert(botTriangles.end(), tris.begin(), tris.end());
+
+			Model* label = botModel->AddModel();
+			label->GetMesh().SetGeometry(
+				std::to_string(nodeIndex),
+				Text3D::Align::CENTER,
+				Color(c.r, c.g, c.b, 255u)
+			);
+			Vec3 labelPos = pos;
+			labelPos.y += labelHeightOffset;
+			label->SetPosition(labelPos);
+		}
+	}
+
+	botModel->GetMesh().SetGeometry(
+		botTriangles,
+		Mesh::RenderFlags::DrawBackfaces | Mesh::RenderFlags::DontOverrideRenderFlags
+	);
 }
 
 void Level::GenerateRenderStartpointData()

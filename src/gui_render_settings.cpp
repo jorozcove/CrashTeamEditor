@@ -23,6 +23,7 @@ bool GuiRenderSettings::showLevel = true;
 bool GuiRenderSettings::showCheckpoints = false;
 bool GuiRenderSettings::showStartpoints = false;
 bool GuiRenderSettings::showVisTree = false;
+bool GuiRenderSettings::showBots = false;
 bool GuiRenderSettings::filterActive = true;
 bool GuiRenderSettings::showSelectedQuadblockInfo = true;
 bool GuiRenderSettings::showSkybox = true;

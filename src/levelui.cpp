@@ -181,6 +181,141 @@ void Checkpoint::RenderUI(size_t numCheckpoints, const std::vector<Quadblock>& q
 	}
 }
 
+void BotNode::RenderUI(int index, bool& deleteRequested)
+{
+	const std::string nodeLabel = "Node " + std::to_string(index);
+	if (ImGui::TreeNode(nodeLabel.c_str()))
+	{
+		// Position
+		float pos[3] = { m_pos.x, m_pos.y, m_pos.z };
+		if (ImGui::DragFloat3("Position", pos, 1.0f))
+		{
+			m_pos.x = pos[0];
+			m_pos.y = pos[1];
+			m_pos.z = pos[2];
+		}
+
+		// Rotation
+		ImGui::DragFloat("Yaw", &m_yaw, 0.5f, -180.0f, 180.0f, "%.1f deg");
+		ImGui::DragFloat("Pitch", &m_pitch, 0.5f, -180.0f, 180.0f, "%.1f deg");
+		ImGui::DragFloat("Roll", &m_roll, 0.5f, -180.0f, 180.0f, "%.1f deg");
+
+		// Flags — one checkbox per named flag bit
+		ImGui::SeparatorText("Flags");
+		auto FlagCheckbox = [&](const char* label, uint16_t bit)
+			{
+				bool v = (m_flags & bit) != 0;
+				if (ImGui::Checkbox(label, &v))
+					m_flags = v ? (m_flags | bit) : (m_flags & ~bit);
+			};
+		FlagCheckbox("Turbo Pad (High)", BotNodeFlags::TURBO_PAD_HIGH);
+		FlagCheckbox("Skidmarks Front", BotNodeFlags::SKIDMARKS_FRONT);
+		FlagCheckbox("Skidmarks Back", BotNodeFlags::SKIDMARKS_BACK);
+		FlagCheckbox("Turbo Pad (Low)", BotNodeFlags::TURBO_PAD_LOW);
+		FlagCheckbox("Mask Grab STP", BotNodeFlags::MASK_GRAB_STP);
+		FlagCheckbox("Jump", BotNodeFlags::JUMP);
+		FlagCheckbox("Drift Left", BotNodeFlags::DRIFT_LEFT);
+		FlagCheckbox("Drift Right", BotNodeFlags::DRIFT_RIGHT);
+		FlagCheckbox("Engine Echo", BotNodeFlags::ENGINE_ECHO);
+		FlagCheckbox("Mid Air", BotNodeFlags::MID_AIR);
+		FlagCheckbox("Sink Kart", BotNodeFlags::SINK_KART);
+
+		// Terrain dropdown — built from TerrainType::LABELS, sorted by value
+		ImGui::SeparatorText("Terrain");
+		// Build a sorted list once, reuse across frames
+		static std::vector<std::pair<std::string, uint8_t>> terrainList;
+		if (terrainList.empty())
+		{
+			for (const auto& [name, val] : TerrainType::LABELS)
+				terrainList.emplace_back(name, val);
+			std::sort(terrainList.begin(), terrainList.end(),
+				[](const auto& a, const auto& b) { return a.second < b.second; });
+		}
+		// Find current terrain label
+		std::string currentLabel = "Unknown";
+		for (const auto& [name, val] : terrainList)
+			if (val == m_terrain) { currentLabel = name; break; }
+
+		if (ImGui::BeginCombo("Terrain Type", currentLabel.c_str()))
+		{
+			for (const auto& [name, val] : terrainList)
+			{
+				bool selected = (val == m_terrain);
+				if (ImGui::Selectable(name.c_str(), selected))
+					m_terrain = val;
+				if (selected)
+					ImGui::SetItemDefaultFocus();
+			}
+			ImGui::EndCombo();
+		}
+
+		// Path change
+		ImGui::SeparatorText("Path Change");
+		ImGui::InputInt("Path Change OpCode", &m_pathChange);
+		ImGui::InputInt("Path Change Index", &m_pathChangeIndex);
+
+		// Misc
+		ImGui::SeparatorText("Misc");
+		int goBack = static_cast<int>(m_goBackCount);
+		if (ImGui::InputInt("Go Back Count", &goBack))
+			m_goBackCount = static_cast<uint8_t>(std::clamp(goBack, 0, 255));
+		int special = static_cast<int>(m_specialBits);
+		if (ImGui::InputInt("Special Bits", &special))
+			m_specialBits = static_cast<uint8_t>(std::clamp(special, 0, 255));
+
+		// Delete button at the bottom of each node
+		ImGui::Spacing();
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.1f, 0.1f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+		if (ImGui::Button(("Delete Node##" + std::to_string(index)).c_str()))
+			deleteRequested = true;
+		ImGui::PopStyleColor(3);
+
+		ImGui::TreePop();
+	}
+}
+
+void BotPath::RenderUI(int pathIndex)
+{
+	const std::string pathLabel = "Nodes";
+	if (ImGui::TreeNode(pathLabel.c_str()))
+	{
+		ImGui::Text("Nodes: %zu", m_nodes.size());
+
+		std::vector<int> toDelete;
+		for (int i = 0; i < static_cast<int>(m_nodes.size()); i++)
+		{
+			bool deleteRequested = false;
+			// Push id to avoid TreeNode label collisions across paths
+			ImGui::PushID(i);
+			m_nodes[i].RenderUI(i, deleteRequested);
+			ImGui::PopID();
+			if (deleteRequested)
+				toDelete.push_back(i);
+		}
+
+		// Process deletions in reverse to preserve indices
+		if (!toDelete.empty())
+		{
+			for (int i = static_cast<int>(toDelete.size()) - 1; i >= 0; i--)
+				m_nodes.erase(m_nodes.begin() + toDelete[i]);
+		}
+
+		if (ImGui::Button(("Add Node##path" + std::to_string(pathIndex)).c_str()))
+		{
+			// Default-construct a new node; position it at the last node's
+			// position if available so it doesn't spawn at the world origin
+			BotNode newNode;
+			if (!m_nodes.empty())
+				newNode.SetPos(m_nodes.back().GetPos());
+			m_nodes.push_back(newNode);
+		}
+
+		ImGui::TreePop();
+	}
+}
+
 template<typename T, MaterialType M>
 bool MaterialProperty<T, M>::RenderUI(const std::string& material, const std::vector<size_t>& quadblockIndexes, std::vector<Quadblock>& quadblocks)
 {
@@ -427,6 +562,7 @@ void Level::RenderUI(Renderer& renderer)
 		if (ImGui::MenuItem("Renderer")) { Settings::w_renderer = !Settings::w_renderer; }
 		if (ImGui::MenuItem("Ghosts")) { Settings::w_ghost = !Settings::w_ghost; }
 		if (ImGui::MenuItem("Python")) { Settings::w_python = !Settings::w_python; }
+		if (ImGui::MenuItem("Bot")) { Settings::w_bot = !Settings::w_bot; }
 		ImGui::EndMainMenuBar();
 	}
 
@@ -1008,7 +1144,7 @@ void Level::RenderUI(Renderer& renderer)
 					unsigned cpStartPoints = checkboxPair("Show Checkpoints", &GuiRenderSettings::showCheckpoints, "Show Starting Positions", &GuiRenderSettings::showStartpoints);
 					if (cpStartPoints & REND_FLAGS_COLUMN_1) { GenerateRenderStartpointData(); }
 					checkboxPair("Show BSP", &GuiRenderSettings::showBspRectTree, "Show Vis Tree", &GuiRenderSettings::showVisTree);
-					unsigned skyboxRenderChanged = checkboxPair("Show Skybox", &GuiRenderSettings::showSkybox, "", nullptr);
+					unsigned skyboxRenderChanged = checkboxPair("Show Skybox", &GuiRenderSettings::showSkybox, "Show BotNodes", &GuiRenderSettings::showBots);
 					if (skyboxRenderChanged & REND_FLAGS_COLUMN_0) { GenerateRenderSkyboxData(); }
 
 					ImGui::EndTable();
@@ -1231,6 +1367,114 @@ void Level::RenderUI(Renderer& renderer)
 				ImGui::TextUnformatted(m_pythonConsole.c_str());
 			}
 			ImGui::EndChild();
+		}
+		ImGui::End();
+	}
+	if (Settings::w_bot)
+	{
+		if (ImGui::Begin("Bot Paths", &Settings::w_bot))
+		{
+			static std::filesystem::path s_objPaths[3];
+			static std::string s_objNames[3] = { "No file selected", "No file selected", "No file selected" };
+			static std::optional<bool> s_genResults[3];
+
+			ImGui::SeparatorText("Settings");
+			ImGui::Checkbox("Use Manual Path", &m_botPathSettings.useManualPath);
+			ImGui::Checkbox("Normalize Node Distance", &m_botPathSettings.normalizeNodeDist);
+			if (m_botPathSettings.normalizeNodeDist)
+			{
+				ImGui::SameLine();
+				ImGui::SetNextItemWidth(200.0f);
+				ImGui::DragFloat("Node Distance", &m_botPathSettings.nodeDistance, 0.1f, 0.1f, 30.0f, "%.1f");
+			}
+
+			for (int i = 0; i < 3; i++)
+			{
+				ImGui::PushID(i);
+				const std::string pathLabel = "Bot Path " + std::to_string(i);
+				ImGui::SeparatorText(pathLabel.c_str());
+				// File selection
+				ImGui::SetNextItemWidth(200.0f);
+				ImGui::BeginDisabled();
+				ImGui::InputText("##botpathobj", &s_objNames[i], ImGuiInputTextFlags_ReadOnly);
+				ImGui::EndDisabled();
+				ImGui::SameLine();
+				ImGui::BeginDisabled(!m_botPathSettings.useManualPath);
+				if (ImGui::Button("Browse##selectbotpath"))
+				{
+					auto selection = pfd::open_file("Select Path OBJ", ".",
+						{ "OBJ Files", "*.obj", "All Files", "*" }).result();
+
+					if (!selection.empty())
+					{
+						s_objPaths[i] = selection[0];
+						s_objNames[i] = s_objPaths[i].filename().string();
+						s_genResults[i].reset();
+					}
+				}
+
+				ImGui::SameLine();
+
+				if (ImGui::Button("Clear"))
+				{
+					s_objPaths[i].clear();
+					s_objNames[i] = "No file selected";
+					s_genResults[i].reset();
+				}
+				ImGui::EndDisabled();
+
+				// Generate button
+				char genLabel[32];
+				std::snprintf(genLabel, sizeof(genLabel), "Generate BotPath %d", i);
+				if (ImGui::Button(genLabel))
+				{
+					s_genResults[i].reset();
+
+					if (m_botPathSettings.useManualPath && !s_objPaths[i].empty())
+					{
+						std::vector<Vec3> vec = LoadPath(s_objPaths[i]);
+						if (m_botPathSettings.normalizeNodeDist) { vec = NormalizePos(vec, m_botPathSettings.nodeDistance); }
+						if (!vec.empty())
+							s_genResults[i] = m_botPaths[i].GeneratePath(vec, m_quadblocks);
+						else
+							s_genResults[i] = false;
+					}
+					else
+					{
+						// use checkpoint node for the bot node too.
+						std::vector<Vec3> vec;
+						int ckpt_id = 0;
+						while (m_checkpoints[ckpt_id].GetUp() != 0)
+						{
+							vec.push_back(m_checkpoints[ckpt_id].GetPos());
+							ckpt_id = m_checkpoints[ckpt_id].GetUp();
+						}
+
+						if (m_botPathSettings.normalizeNodeDist) { vec = NormalizePos(vec, m_botPathSettings.nodeDistance); }
+						s_genResults[i] = m_botPaths[i].GeneratePath(vec, m_quadblocks);
+					}
+				}
+
+				if (s_genResults[i].has_value())
+				{
+					if (s_genResults[i].value())
+					{
+						ImGui::SameLine();
+						ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Generation succeeded!");
+					}
+					else
+					{
+						ImGui::SameLine();
+						ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Generation failed!");
+					}
+				}
+
+				
+
+				m_botPaths[i].RenderUI(i);
+				if (i<2){ ImGui::Separator(); }
+				ImGui::PopID();
+			}
 		}
 		ImGui::End();
 	}

@@ -339,7 +339,8 @@ namespace PSX
 	{
 		uint16_t magic;
 		uint16_t numPoints;
-		uint32_t posY;
+		uint16_t unk1; //Padding ?
+		uint16_t posY;
 		uint32_t offLastPoint;
 		uint16_t physUnk[0x20];
 	};
@@ -348,7 +349,8 @@ namespace PSX
 	{
 		PSX::Vec3 pos; // 0x0
 		int8_t rot[4]; // 0x6
-		int16_t unk2[2]; // 0xA
+		int16_t distXYZ; // 0xA // Distance to the next node
+		int16_t distXZ; // 0xC
 		uint16_t flags; //0xE
 		int16_t pathChangeOpCode; //0x10
 		uint8_t goBackCount; // 0x12

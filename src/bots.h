@@ -2,6 +2,7 @@
 
 #include "geo.h"
 #include "psx_types.h"
+#include "quadblock.h"
 #include <filesystem>
 #include <string>
 #include <cstdint>
@@ -12,6 +13,32 @@
 static inline float BamToAngle(int8_t bam) { return (static_cast<float>(bam) * 360.0f) / 256.0f; }
 static inline int8_t AngleToBam(float deg) { return static_cast<int8_t>(std::round((deg * 256.0f) / 360.0f)); }
 
+static constexpr uint16_t BOT_PATH_MAGIC = 0xECFD;
+struct BotNodeFlags
+{
+    static constexpr uint16_t NONE = 0;
+    static constexpr uint16_t TURBO_PAD_HIGH = 1 << 0;
+    static constexpr uint16_t SKIDMARKS_FRONT = 1 << 1;
+    static constexpr uint16_t SKIDMARKS_BACK = 1 << 2;
+    static constexpr uint16_t TERRAIN_MASK = 0x00F8;
+    static constexpr uint16_t TURBO_PAD_LOW = 1 << 8;
+    static constexpr uint16_t MASK_GRAB_STP = 1 << 9;
+    static constexpr uint16_t JUMP = 1 << 10;
+    static constexpr uint16_t DRIFT_LEFT = 1 << 11;
+    static constexpr uint16_t DRIFT_RIGHT = 1 << 12;
+    static constexpr uint16_t ENGINE_ECHO = 1 << 13;
+    static constexpr uint16_t MID_AIR = 1 << 14;
+    static constexpr uint16_t SINK_KART = 1 << 15;
+};
+
+struct BotPathSettings
+{
+    bool  useManualPath = false;
+    bool  normalizeNodeDist = false;
+    float nodeDistance = 5.0f;
+};
+
+
 class BotNode
 {
 public:
@@ -19,7 +46,8 @@ public:
     BotNode() = default;
     BotNode(const PSX::NavFrame& frame);
   
-    std::vector<uint8_t> Serialize() const;
+    std::vector<uint8_t> Serialize(const Vec3& nextPos) const;
+    void RenderUI(int index, bool& deleteRequested);
     
     const Vec3& GetPos() const { return m_pos; }
     void        SetPos(const Vec3& pos) { m_pos = pos; }
@@ -46,17 +74,20 @@ public:
     uint16_t GetFlags()            const { return m_flags; }
     void     SetFlags(uint16_t f) { m_flags = f; }
 
-    int16_t  GetPathChangeOpCode() const { return m_pathChangeOpCode; }
-    void     SetPathChangeOpCode(int16_t v) { m_pathChangeOpCode = v; }
+    uint8_t  GetTerrain()      const { return m_terrain; }
+    void     SetTerrain(uint8_t v) { m_terrain = v; }
 
     uint8_t  GetGoBackCount()      const { return m_goBackCount; }
     void     SetGoBackCount(uint8_t v) { m_goBackCount = v; }
 
+    int  GetPathChange()      const { return m_pathChange; }
+    void     SetPathChange(int v) { m_pathChange = v; }
+
+    int  GetPathChangeIndex()      const { return m_pathChangeIndex; }
+    void     SetPathChangeIndex(int v) { m_pathChangeIndex = v; }
+
     uint8_t  GetSpecialBits()      const { return m_specialBits; }
     void     SetSpecialBits(uint8_t v) { m_specialBits = v; }
-
-    int16_t  GetUnk2(int i)        const { return m_unk2[i]; }
-    void     SetUnk2(int i, int16_t v) { m_unk2[i] = v; }
 
 private:
     Vec3 m_pos = {};
@@ -64,9 +95,10 @@ private:
     float m_pitch = 0.0f; // rot[0]
     float m_roll = 0.0f; // rot[2]
 
-    int16_t  m_unk2[2] = {};
     uint16_t m_flags = 0;
-    int16_t  m_pathChangeOpCode = 0;
+    uint8_t m_terrain = TerrainType::ASPHALT;
+    int m_pathChange = 0;
+    int m_pathChangeIndex = 0;
     uint8_t  m_goBackCount = 0;
     uint8_t  m_specialBits = 0;
 };
@@ -79,8 +111,11 @@ public:
     BotPath(const PSX::NavHeader& header, const std::vector<PSX::NavFrame>& frames);
     void Clear();
     bool IsValid();
+    bool LoadFromOBJ(const std::filesystem::path& path, std::vector<Quadblock>& quadblocks);
+    bool GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& quadblocks);
 
     std::vector<uint8_t> Serialize() const;
+    void RenderUI(int pathIndex);
 
     const std::vector<BotNode>& GetNodes() const { return m_nodes; }
     std::vector<BotNode>& GetNodes() { return m_nodes; }
@@ -94,22 +129,10 @@ public:
     void InsertNode(size_t index, const BotNode& node) { m_nodes.insert(m_nodes.begin() + index, node); }
     void RemoveNode(size_t index) { m_nodes.erase(m_nodes.begin() + index); }
 
-    uint16_t GetMagic()        const { return m_magic; }
-    void     SetMagic(uint16_t v) { m_magic = v; }
-
-    uint32_t GetPosY()         const { return m_posY; }
-    void     SetPosY(uint32_t v) { m_posY = v; }
-
-    uint32_t GetOffLastPoint() const { return m_offLastPoint; }
-    void     SetOffLastPoint(uint32_t v) { m_offLastPoint = v; }
-
     uint16_t GetPhysUnk(size_t i) const { return m_physUnk[i]; }
     void     SetPhysUnk(size_t i, uint16_t v) { m_physUnk[i] = v; }
 
 private:
     std::vector<BotNode> m_nodes;
-    uint16_t m_magic = 0;
-    uint32_t m_posY = 0;
-    uint32_t m_offLastPoint = 0;
     uint16_t m_physUnk[0x20] = {};
 };

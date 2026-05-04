@@ -36,7 +36,8 @@ namespace LevelModels
 	static constexpr size_t MULTI_SELECTED = 5;
 	static constexpr size_t FILTER = 6;
 	static constexpr size_t SKYBOX = 7;
-	static constexpr size_t COUNT = 8;
+	static constexpr size_t BOT = 8;
+	static constexpr size_t COUNT = 9;
 };
 
 class Level
@@ -52,6 +53,7 @@ public:
 	BSP& GetBSP();
 	std::vector<Checkpoint>& GetCheckpoints();
 	std::vector<Path>& GetCheckpointPaths();
+	std::vector<BotNode>& GetBotPathLeft();
 	const std::filesystem::path& GetParentPath() const;
 	std::vector<std::string> GetMaterialNames() const;
 	std::vector<size_t> GetMaterialQuadblockIndexes(const std::string& material) const;
@@ -60,6 +62,7 @@ public:
 	Model* GetBspModel();
 	Model* GetSpawnModel();
 	Model* GetCheckpointModel();
+	Model* GetBotModel();
 	Model* GetSelectedModel();
 	Model* GetMultiSelectedModel();
 	Model* GetFilterModel();
@@ -68,15 +71,20 @@ public:
 	void ResetFilter();
 	void ResetRendererSelection();
 	void UpdateRenderCheckpointData();
+	void UpdateRenderBotData();
 	void GenerateRenderLevData();
 	bool GenerateVisTreeOnly(bool simpleVisTree, float distanceNearClip, float distanceFarClip);
 	bool GenerateVisTreeOnly();
+	void GenerateBotPathLeft();
 	bool HasRawTexture() const { return m_hasRawTexture; }
 
 private:
 	void ManageTurbopad(Quadblock& quadblock);
 	bool LoadLEV(const std::filesystem::path& levFile);
 	bool LoadOBJ(const std::filesystem::path& objFile);
+	std::vector<Vec3> LoadPath(const std::filesystem::path& path);
+	std::vector<Vec3> NormalizePos(const std::vector<Vec3>& pos, float dist);
+
 	bool StartEmuIPC(const std::string& emulator);
 	bool HotReload(const std::string& levPath, const std::string& vrmPath, const std::string& emulator);
 	bool SaveGhostData(const std::string& emulator, const std::filesystem::path& path);
@@ -109,6 +117,7 @@ private:
 	int m_maxQuadPerLeaf;
 	float m_maxLeafAxisLength;
 	VisTreeSettings m_visTreeSettings;
+	BotPathSettings m_botPathSettings;
 
 	std::vector<std::tuple<std::string, std::string>> m_invalidQuadblocks;
 	std::string m_logMessage;

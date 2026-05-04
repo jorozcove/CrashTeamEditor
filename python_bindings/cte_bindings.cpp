@@ -456,6 +456,7 @@ void init_crashteameditor(py::module_& m)
 	py::bind_vector<std::vector<Quadblock>>(m, "QuadblockList");
 	py::bind_vector<std::vector<Checkpoint>>(m, "CheckpointList");
 	py::bind_vector<std::vector<Path>>(m, "PathList");
+	py::bind_vector<std::vector<BotNode>>(m, "BotNodeList");
 	py::bind_vector<std::vector<size_t>>(m, "IndexList");
 
 	py::enum_<BSPNode> bspNode(m, "BSPNode");
@@ -530,6 +531,38 @@ void init_crashteameditor(py::module_& m)
 		.def("clear", &BSP::Clear)
 		.def("generate", &BSP::Generate, py::arg("quadblocks"), py::arg("max_quads_per_leaf"), py::arg("max_axis_length"));
 
+
+	py::class_<BotNode>(m, "BotNode")
+		.def(py::init<>())
+		.def_property("pos",
+			[](const BotNode& n) { return n.GetPos(); },
+			[](BotNode& n, const Vec3& v) { n.SetPos(v); })
+		.def_property("yaw",
+			&BotNode::GetYaw,
+			&BotNode::SetYaw)
+		.def_property("pitch",
+			&BotNode::GetPitch,
+			&BotNode::SetPitch)
+		.def_property("roll",
+			&BotNode::GetRoll,
+			&BotNode::SetRoll)
+		.def_property("flags",
+			&BotNode::GetFlags,
+			&BotNode::SetFlags)
+		.def_property("go_back_count",
+			&BotNode::GetGoBackCount,
+			&BotNode::SetGoBackCount)
+		.def_property("path_change",
+			&BotNode::GetPathChange,
+			&BotNode::SetPathChange)
+		.def_property("path_change_index",
+			&BotNode::GetPathChangeIndex,
+			&BotNode::SetPathChangeIndex)
+		.def_property("special_bits",
+			&BotNode::GetSpecialBits,
+			&BotNode::SetSpecialBits);
+
+
 	py::class_<Level> level(m, "Level");
 	level
 		.def(py::init<>())
@@ -545,6 +578,7 @@ void init_crashteameditor(py::module_& m)
 		.def_property_readonly("bsp", &Level::GetBSP, py::return_value_policy::reference_internal)
 		.def_property_readonly("checkpoints", &Level::GetCheckpoints, py::return_value_policy::reference_internal)
 		.def_property_readonly("checkpoint_paths", &Level::GetCheckpointPaths, py::return_value_policy::reference_internal)
+		.def_property_readonly("bot_path_left", &Level::GetBotPathLeft, py::return_value_policy::reference_internal)
 		.def_property_readonly("model_level", &Level::GetLevelModel, py::return_value_policy::reference_internal)
 		.def_property_readonly("model_bsp", &Level::GetBspModel, py::return_value_policy::reference_internal)
 		.def_property_readonly("model_spawn", &Level::GetSpawnModel, py::return_value_policy::reference_internal)
