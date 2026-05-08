@@ -418,6 +418,7 @@ Quadblock::Quadblock(const PSX::Quadblock& quadblock, const std::vector<PSX::Ver
 	}
 	m_offTextures[NUM_FACES_QUADBLOCK] = quadblock.offLowTexture;
 	m_terrain = quadblock.terrain;
+	m_downforce = static_cast<int>(quadblock.speedImpact);
 	m_checkpointIndex = quadblock.checkpointIndex;
 	if (m_checkpointIndex == std::numeric_limits<uint8_t>::max()) { m_checkpointIndex = -1; }
 	else { m_checkpointStatus = true; }

@@ -83,7 +83,7 @@ private:
 	bool LoadLEV(const std::filesystem::path& levFile);
 	bool LoadOBJ(const std::filesystem::path& objFile);
 	std::vector<Vec3> LoadPath(const std::filesystem::path& path);
-	std::vector<Vec3> NormalizePos(const std::vector<Vec3>& pos, float dist);
+
 
 	bool StartEmuIPC(const std::string& emulator);
 	bool HotReload(const std::string& levPath, const std::string& vrmPath, const std::string& emulator);

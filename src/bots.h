@@ -34,8 +34,9 @@ struct BotNodeFlags
 struct BotPathSettings
 {
     bool  useManualPath = false;
-    bool  normalizeNodeDist = false;
-    float nodeDistance = 5.0f;
+    bool  normalizeNodeDist = true;
+    float nodeDistance = 4.0f;
+    float sidewayOffset = 6.0f;
 };
 
 
@@ -136,3 +137,6 @@ private:
     std::vector<BotNode> m_nodes;
     uint16_t m_physUnk[0x20] = {};
 };
+
+std::vector<Vec3> NormalizePos(const std::vector<Vec3>& pos, float dist);
+std::vector<Vec3> GenerateLateralPath(const std::vector<BotNode>& nodes, float lateralOffset, std::vector<Quadblock>& quadblocks);

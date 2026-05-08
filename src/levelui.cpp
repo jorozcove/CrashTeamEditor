@@ -1380,6 +1380,11 @@ void Level::RenderUI(Renderer& renderer)
 
 			ImGui::SeparatorText("Settings");
 			ImGui::Checkbox("Use Manual Path", &m_botPathSettings.useManualPath);
+			ImGui::SameLine();
+			ImGui::BeginDisabled(m_botPathSettings.useManualPath);
+			ImGui::SetNextItemWidth(200.0f);
+			ImGui::DragFloat("Sideway Path Offset", &m_botPathSettings.sidewayOffset, 0.1f, 0.1f, 30.0f, "%.1f");
+			ImGui::EndDisabled();
 			ImGui::Checkbox("Normalize Node Distance", &m_botPathSettings.normalizeNodeDist);
 			if (m_botPathSettings.normalizeNodeDist)
 			{
@@ -1441,18 +1446,31 @@ void Level::RenderUI(Renderer& renderer)
 					}
 					else
 					{
-						// use checkpoint node for the bot node too.
+						// use checkpoint node for the bot node.
 						std::vector<Vec3> vec;
 						int ckpt_id = 0;
-						while (m_checkpoints[ckpt_id].GetUp() != 0)
+						while (m_checkpoints[ckpt_id].GetUp() > 0)
 						{
 							vec.push_back(m_checkpoints[ckpt_id].GetPos());
 							ckpt_id = m_checkpoints[ckpt_id].GetUp();
 						}
 
 						if (m_botPathSettings.normalizeNodeDist) { vec = NormalizePos(vec, m_botPathSettings.nodeDistance); }
-						s_genResults[i] = m_botPaths[i].GeneratePath(vec, m_quadblocks);
+						if (i == 1) // Middle Path
+						{
+							s_genResults[i] = m_botPaths[i].GeneratePath(vec, m_quadblocks);
+						}
+						else
+						{
+							BotPath middlePath{};
+							middlePath.GeneratePath(vec, m_quadblocks);
+							vec = GenerateLateralPath(middlePath.GetNodes(), i == 0 ? -m_botPathSettings.sidewayOffset : +m_botPathSettings.sidewayOffset, m_quadblocks);
+							if (m_botPathSettings.normalizeNodeDist) { vec = NormalizePos(vec, m_botPathSettings.nodeDistance); }
+							s_genResults[i] = m_botPaths[i].GeneratePath(vec, m_quadblocks);
+						}
+
 					}
+					UpdateRenderBotData();
 				}
 
 				if (s_genResults[i].has_value())

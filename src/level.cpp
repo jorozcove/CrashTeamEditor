@@ -240,90 +240,6 @@ bool Level::GenerateVisTreeOnly()
 	return false;
 }
 
-std::vector<Vec3> Level::NormalizePos(const std::vector<Vec3>& pos, float dist)
-{
-	if (pos.size() < 2 || dist <= 0.0f)
-		return pos;
-
-	// --- Step 1: Build a Catmull-Rom spline and sample it at a fine resolution
-	// to get an accurate arc-length parameterization of the path.
-	// We'll generate many densely-packed points along the spline first,
-	// then re-sample them at the requested uniform distance.
-
-	auto catmullRom = [](const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3, float t) -> Vec3
-		{
-			const float t2 = t * t;
-			const float t3 = t2 * t;
-			return (p1 * 2.0f
-				+ (p2 - p0) * t
-				+ (p0 * 2.0f - p1 * 5.0f + p2 * 4.0f - p3) * t2
-				+ (p1 * 3.0f - p0 - p2 * 3.0f + p3) * t3) * 0.5f;
-		};
-
-	// Clamp index to valid range, clamping endpoints for the phantom points
-	auto getPoint = [&](int i) -> const Vec3&
-		{
-			if (i < 0) i = 0;
-			if (i >= static_cast<int>(pos.size())) i = static_cast<int>(pos.size()) - 1;
-			return pos[i];
-		};
-
-	// Sample the spline densely — use enough steps per segment to not miss curvature
-	const int stepsPerSegment = 64;
-	std::vector<Vec3> denseSamples;
-	denseSamples.reserve(pos.size() * stepsPerSegment);
-
-	for (int i = 0; i < static_cast<int>(pos.size()) - 1; i++)
-	{
-		const Vec3& p0 = getPoint(i - 1);
-		const Vec3& p1 = getPoint(i);
-		const Vec3& p2 = getPoint(i + 1);
-		const Vec3& p3 = getPoint(i + 2);
-
-		for (int step = 0; step < stepsPerSegment; step++)
-		{
-			const float t = static_cast<float>(step) / static_cast<float>(stepsPerSegment);
-			denseSamples.push_back(catmullRom(p0, p1, p2, p3, t));
-		}
-	}
-	denseSamples.push_back(pos.back());
-
-	// --- Step 2: Re-sample the dense polyline at uniform arc-length intervals (dist)
-
-	std::vector<Vec3> result;
-	result.push_back(denseSamples.front());
-
-	float accumulated = 0.0f;
-
-	for (int i = 1; i < static_cast<int>(denseSamples.size()); i++)
-	{
-		const Vec3  segment = denseSamples[i] - denseSamples[i - 1];
-		const float segLen = segment.Length();
-
-		if (segLen == 0.0f)
-			continue;
-
-		float remaining = segLen;
-		float offset = 0.0f;
-
-		while (accumulated + remaining >= dist)
-		{
-			const float step = dist - accumulated;
-			offset += step;
-			remaining -= step;
-			accumulated = 0.0f;
-
-			const Vec3 dir = segment / segLen;
-			const Vec3 point = denseSamples[i - 1] + dir * offset;
-			result.push_back(point);
-		}
-
-		accumulated += remaining;
-	}
-
-	return result;
-}
-
 
 std::vector<Vec3> Level::LoadPath(const std::filesystem::path& path)
 {
@@ -408,6 +324,8 @@ std::vector<Vec3> Level::LoadPath(const std::filesystem::path& path)
 
 	return ordered;
 }
+
+
 
 
 

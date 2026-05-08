@@ -58,6 +58,37 @@ bool BotPath::IsValid()
     return m_nodes.size() > 1;
 }
 
+bool isAboveQuad(const Vec3& point, const Quadblock& quad, float& height)
+    //Helper function : is a point above a quadblock ?
+    //Modify height
+{
+    const Vertex* verts = quad.GetUnswizzledVertices();
+    for (const std::array<size_t, 3>&ids : quad.GetCollTriFacesIndexes())
+    {
+        const Vec3& A = verts[ids[0]].m_pos;
+        const Vec3& B = verts[ids[1]].m_pos;
+        const Vec3& C = verts[ids[2]].m_pos;
+        const float d1 = (B.x - A.x) * (point.z - A.z) - (B.z - A.z) * (point.x - A.x);
+        const float d2 = (C.x - B.x) * (point.z - B.z) - (C.z - B.z) * (point.x - B.x);
+        const float d3 = (A.x - C.x) * (point.z - C.z) - (A.z - C.z) * (point.x - C.x);
+        if ((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))
+        {
+            continue; // Point outisde of Tri
+        }
+
+        const float denom = (B.z - C.z) * (A.x - C.x) + (C.x - B.x) * (A.z - C.z);
+        if (std::abs(denom) < 1e-6f)
+            continue; // degenerate triangle, skip
+
+        const float u = ((B.z - C.z) * (point.x - C.x) + (C.x - B.x) * (point.z - C.z)) / denom;
+        const float v = ((C.z - A.z) * (point.x - C.x) + (A.x - C.x) * (point.z - C.z)) / denom;
+        const float w = 1.0f - u - v;
+
+        height = u * A.y + v * B.y + w * C.y;
+        return true;
+    }
+    return false;
+}
 
 bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& quadblocks)
 {
@@ -66,7 +97,7 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
 
 
     const size_t nodeCount = nodesPos.size();
-    constexpr float GROUND_THRESHOLD = 2.0f;
+    constexpr float GROUND_THRESHOLD = 8.0f;
     constexpr float NEARBY_THRESHOLD = 2.0f;
     constexpr float REVERB_THRESHOLD = 50.0f; // broader search for reverb, not just ground
     constexpr float SHARP_TURN_THRESHOLD = 15.0f; // degrees, for drift detection
@@ -78,146 +109,7 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
     constexpr float DRIFT_MIN_DISTANCE = 25.0f;   // at least 2s worth of distance
     constexpr int   DRIFT_ANTICIPATION_NODES = 2; // start drift this many nodes before the sharp section
 
-    // --- Helper: get the surface normal of a quadblock's sub-face under a given XZ position ---
-// The quadblock has 4 sub-quads (q0..q3). We find which sub-quad contains the XZ point
-// and return the normal of that face, computed from its vertices.
-    auto GetSurfaceNormalAt = [&](const Quadblock& quad, const Vec3& pos) -> Vec3
-        {
-            const Vertex* const verts = quad.GetUnswizzledVertices();
-            // Sub-quad vertex indices:
-            // q0: p0,p1,p3,p4  q1: p1,p2,p4,p5
-            // q2: p3,p4,p6,p7  q3: p4,p5,p7,p8
-            const int subQuads[4][4] = {
-                {0, 1, 3, 4},
-                {1, 2, 4, 5},
-                {3, 4, 6, 7},
-                {4, 5, 7, 8}
-            };
-
-            // Find which sub-quad the XZ position falls inside, pick the closest if none match
-            int bestQuad = 0;
-            float bestDist = FLT_MAX;
-            for (int q = 0; q < 4; q++)
-            {
-                const Vec3& a = verts[subQuads[q][0]].m_pos;
-                const Vec3& c = verts[subQuads[q][3]].m_pos; // opposite corner
-                float minX = std::min(a.x, c.x), maxX = std::max(a.x, c.x);
-                float minZ = std::min(a.z, c.z), maxZ = std::max(a.z, c.z);
-                if (pos.x >= minX && pos.x <= maxX && pos.z >= minZ && pos.z <= maxZ)
-                {
-                    bestQuad = q;
-                    bestDist = 0.0f;
-                    break;
-                }
-                // Fallback: distance from sub-quad center
-                float cx = (a.x + c.x) * 0.5f;
-                float cz = (a.z + c.z) * 0.5f;
-                float dx = pos.x - cx, dz = pos.z - cz;
-                float dist = dx * dx + dz * dz;
-                if (dist < bestDist) { bestDist = dist; bestQuad = q; }
-            }
-
-            // Compute normal from the two triangles of the best sub-quad
-            // Use p0,p1,p3 and p1,p3,p4 (top-left triangle and bottom-right triangle), average them
-            const Vec3& v0 = verts[subQuads[bestQuad][0]].m_pos;
-            const Vec3& v1 = verts[subQuads[bestQuad][1]].m_pos;
-            const Vec3& v2 = verts[subQuads[bestQuad][2]].m_pos;
-            const Vec3& v3 = verts[subQuads[bestQuad][3]].m_pos;
-
-            auto Cross = [](const Vec3& a, const Vec3& b) -> Vec3 {
-                return { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
-                };
-            auto Sub = [](const Vec3& a, const Vec3& b) -> Vec3 {
-                return { a.x - b.x, a.y - b.y, a.z - b.z };
-                };
-            auto Normalize = [](const Vec3& v) -> Vec3 {
-                float len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-                if (len < 1e-6f) return { 0.f, 1.f, 0.f };
-                return { v.x / len, v.y / len, v.z / len };
-                };
-
-            Vec3 n0 = Cross(Sub(v2, v0), Sub(v3, v1)); // diagonal 0->2 cross diagonal 1->3
-            Vec3 avg = Normalize(n0);
-
-            if (avg.y < 0.0f) { avg.x = -avg.x; avg.y = -avg.y; avg.z = -avg.z; }
-            //return avg;
-            return quad.GetNormal();
-        };
-
-    // --- Helper: interpolate surface Y from quad vertices at XZ position ---
-    auto GetSurfaceYAt = [&](const Quadblock& quad, const Vec3& pos) -> float
-        {
-            const Vertex* const verts = quad.GetUnswizzledVertices();
-            const int subQuads[4][4] = {
-                {0, 1, 3, 4}, {1, 2, 4, 5},
-                {3, 4, 6, 7}, {4, 5, 7, 8}
-            };
-
-            // Find best sub-quad (same logic as above)
-            int bestQuad = 0;
-            float bestDist = FLT_MAX;
-            for (int q = 0; q < 4; q++)
-            {
-                const Vec3& a = verts[subQuads[q][0]].m_pos;
-                const Vec3& c = verts[subQuads[q][3]].m_pos;
-                float minX = std::min(a.x, c.x), maxX = std::max(a.x, c.x);
-                float minZ = std::min(a.z, c.z), maxZ = std::max(a.z, c.z);
-                if (pos.x >= minX && pos.x <= maxX && pos.z >= minZ && pos.z <= maxZ)
-                {
-                    bestQuad = q; bestDist = 0.0f; break;
-                }
-                float cx = (a.x + c.x) * 0.5f, cz = (a.z + c.z) * 0.5f;
-                float dx = pos.x - cx, dz = pos.z - cz;
-                float dist = dx * dx + dz * dz;
-                if (dist < bestDist) { bestDist = dist; bestQuad = q; }
-            }
-
-            // Bilinear interpolation of Y across the sub-quad
-            const Vec3& tl = verts[subQuads[bestQuad][0]].m_pos; // top-left
-            const Vec3& tr = verts[subQuads[bestQuad][1]].m_pos; // top-right
-            const Vec3& bl = verts[subQuads[bestQuad][2]].m_pos; // bottom-left
-            const Vec3& br = verts[subQuads[bestQuad][3]].m_pos; // bottom-right
-
-            float rangeX = tr.x - tl.x;
-            float rangeZ = bl.z - tl.z;
-            float tx = (rangeX > 1e-6f) ? std::clamp((pos.x - tl.x) / rangeX, 0.f, 1.f) : 0.f;
-            float tz = (rangeZ > 1e-6f) ? std::clamp((pos.z - tl.z) / rangeZ, 0.f, 1.f) : 0.f;
-
-            float yTop = tl.y + tx * (tr.y - tl.y);
-            float yBot = bl.y + tx * (br.y - bl.y);
-            return yTop + tz * (yBot - yTop);
-        };
-
-
-    // --- Helper: find the best ground quadblock directly under a position ---
-    auto FindGroundQuadUnder = [&](const Vec3& pos) -> const Quadblock*
-        {
-            const Quadblock* best = nullptr;
-            float bestDist = FLT_MAX;
-            for (const Quadblock& quad : quadblocks)
-            {
-                if (!(quad.GetFlags() & QuadFlags::GROUND)) { continue; }
-                const BoundingBox& bb = quad.GetBoundingBox();
-                // Broad XZ cull using bounding box first for performance
-                if (pos.x < bb.min.x || pos.x > bb.max.x) { continue; }
-                if (pos.z < bb.min.z || pos.z > bb.max.z) { continue; }
-                // Get actual surface Y via vertex interpolation
-                float surfaceY = GetSurfaceYAt(quad, pos);
-                if (pos.y + GROUND_THRESHOLD < surfaceY) { continue; } // node is below the surface, skip
-                float dist = pos.y - surfaceY;
-                if (dist < bestDist) { bestDist = dist; best = &quad; }
-            }
-            return best;
-        };
-
-    // --- Helper: is the node grounded (within threshold of a ground quad) ---
-    auto IsGrounded = [&](const Vec3& pos, const Quadblock* groundQuad) -> bool
-        {
-            if (!groundQuad) { return false; }
-            float dist = pos.y - groundQuad->GetBoundingBox().max.y;
-            return dist <= GROUND_THRESHOLD;
-        };
-
+    
     // --- Helper: any nearby quad matching a predicate ---
     auto HasNearbyQuad = [&](const Vec3& pos, float radius,
         const std::function<bool(const Quadblock&)>& predicate) -> bool
@@ -256,11 +148,39 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
     std::vector<bool> grounded(nodeCount);
     for (size_t i = 0; i < nodeCount; i++)
     {
-        groundQuads[i] = FindGroundQuadUnder(nodesPos[i]);
-        grounded[i] = IsGrounded(nodesPos[i], groundQuads[i]);
+        Vec3        pos = nodesPos[i];
+        float       bestDist = GROUND_THRESHOLD;
+        float       bestSurfaceY = pos.y;
+
+        for (const Quadblock& quad : quadblocks)
+        {
+            if (!(quad.GetFlags() & QuadFlags::GROUND))
+                continue;
+
+            const BoundingBox& bb = quad.GetBoundingBox();
+            if (pos.x < bb.min.x || pos.x > bb.max.x) continue;
+            if (pos.z < bb.min.z || pos.z > bb.max.z) continue;
+
+            float height = 0.0f;
+            bool above = isAboveQuad(pos, quad, height);
+            if (!above)
+                continue;
+
+            const float dist = std::abs(pos.y - height);
+            // Skip quads that are significantly below the node —
+            // these are lower floors, not the surface we want to snap to.
+            // Use a generous threshold to allow snapping down into a surface too.
+            if (dist > bestDist)
+                continue;
+            bestDist = dist;
+            groundQuads[i] = &quad;
+            pos.y = height;
+        }
+        grounded[i] = bestDist < GROUND_THRESHOLD;
+        m_nodes[i].SetPos(pos); 
     }
 
-    /// --- Pre-pass: compute yaw and pitch ---
+    /// --- Pre-pass: compute yaw ---
     std::vector<float> yaws(nodeCount);
     std::vector<float> pitches(nodeCount);
     for (size_t i = 0; i < nodeCount; i++)
@@ -275,55 +195,6 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
         // Yaw from delta position — unaffected by surface normal
         yaws[i] = std::atan2(dx, dz) * (180.0f / 3.14159265f);
         m_nodes[i].SetYaw(yaws[i]);
-
-        // Pitch depends on whether the node is grounded or airborne
-        const Quadblock* groundQuad = groundQuads[i];
-        bool isGrounded = grounded[i];
-
-        if (isGrounded && groundQuad)
-        {
-            // When grounded, the kart's local up = surface normal.
-            // Pitch is the angle between the kart's forward axis and the surface plane.
-            // Forward axis comes from yaw (which will later have drift bonus applied),
-            // but at this stage we use the raw travel yaw — drift adjusts yaw[i] in
-            // the drift pre-pass which runs after this, so pitch is recomputed after.
-            Vec3 surfaceNormal = GetSurfaceNormalAt(*groundQuad, curr);
-
-            // Build forward direction from current yaw in world space
-            float yawRad = yaws[i] * (3.14159265f / 180.0f);
-            Vec3 forward = { std::sin(yawRad), 0.0f, std::cos(yawRad) };
-
-            // Project forward onto the surface plane (remove normal component)
-            float fwdDotN = forward.x * surfaceNormal.x
-                + forward.y * surfaceNormal.y
-                + forward.z * surfaceNormal.z;
-            Vec3 forwardOnSurface = {
-                forward.x - fwdDotN * surfaceNormal.x,
-                forward.y - fwdDotN * surfaceNormal.y,
-                forward.z - fwdDotN * surfaceNormal.z
-            };
-
-            // Normalize the projected forward
-            float len = std::sqrt(forwardOnSurface.x * forwardOnSurface.x
-                + forwardOnSurface.y * forwardOnSurface.y
-                + forwardOnSurface.z * forwardOnSurface.z);
-            if (len > 1e-6f)
-            {
-                forwardOnSurface.x /= len;
-                forwardOnSurface.y /= len;
-                forwardOnSurface.z /= len;
-            }
-
-            // Pitch = angle the surface-projected forward makes with the horizontal plane
-            // Positive = nose down (forward.y is negative when going downhill)
-            pitches[i] = -std::asin(std::clamp(forwardOnSurface.y, -1.0f, 1.0f))
-                * (180.0f / 3.14159265f);
-        }
-        else
-        {
-            // Airborne: local up = world up, pitch purely from travel direction
-            pitches[i] = 0;
-        }
     }
 
 
@@ -445,7 +316,7 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
         bool isDrifting = (flags & (BotNodeFlags::DRIFT_LEFT | BotNodeFlags::DRIFT_RIGHT)) != 0;
         if (!isDrifting || !grounded[i] || !groundQuads[i]) { continue; }
 
-        Vec3 surfaceNormal = GetSurfaceNormalAt(*groundQuads[i], nodesPos[i]);
+        Vec3 surfaceNormal = groundQuads[i]->GetNormal();
         float yawRad = yaws[i] * (3.14159265f / 180.0f); // now includes drift bonus
         Vec3 forward = { std::sin(yawRad), 0.0f, std::cos(yawRad) };
 
@@ -475,7 +346,6 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
     for (size_t i = 0; i < nodeCount; i++)
     {
         BotNode& node = m_nodes[i];
-        node.SetPos(nodesPos[i]);
         node.SetSpecialBits(0);
         node.SetPathChange(3); // no path change
         node.SetPathChangeIndex(static_cast<int>((i + 4) % nodeCount));
@@ -495,7 +365,7 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
 
         if (groundQuad && isGrounded)
         {
-            Vec3 normal = GetSurfaceNormalAt(*groundQuad, nodesPos[i]);
+            Vec3 normal = groundQuads[i]->GetNormal();
 
             // Remove the forward component from the normal to get the lateral tilt only
             float fwdDot = normal.x * forward.x + normal.y * forward.y + normal.z * forward.z;
@@ -656,4 +526,169 @@ std::vector<uint8_t> BotPath::Serialize() const
 }
 
 
+std::vector<Vec3> NormalizePos(const std::vector<Vec3>& pos, float dist)
+// Take a list of Vec3, and use it at the base of a path (Catmull–Rom spline approximation), and return
+// a list of Vec3 spaced out by the same amount (dist) 
+{
+    int numPoint = pos.size();
+    if (numPoint < 2 || dist <= 0.0f)
+        return pos;
 
+    auto catmullRomAlpha = [](const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3, float t, float alpha = 0.5f) -> Vec3
+        {
+            auto getT = [alpha](float t, const Vec3& p0, const Vec3& p1) -> float
+                {
+                    const float dx = p1.x - p0.x;
+                    const float dy = p1.y - p0.y;
+                    const float dz = p1.z - p0.z;
+                    const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+                    return t + std::pow(dist, alpha);
+                };
+
+            const float t0 = 0.0f;
+            const float t1 = getT(t0, p0, p1);
+            const float t2 = getT(t1, p1, p2);
+            const float t3 = getT(t2, p2, p3);
+
+            // Remap input t (0..1) to the actual parameter range (t1..t2)
+            const float s = t1 + t * (t2 - t1);
+
+            const Vec3 A1 = p0 * ((t1 - s) / (t1 - t0)) + p1 * ((s - t0) / (t1 - t0));
+            const Vec3 A2 = p1 * ((t2 - s) / (t2 - t1)) + p2 * ((s - t1) / (t2 - t1));
+            const Vec3 A3 = p2 * ((t3 - s) / (t3 - t2)) + p3 * ((s - t2) / (t3 - t2));
+
+            const Vec3 B1 = A1 * ((t2 - s) / (t2 - t0)) + A2 * ((s - t0) / (t2 - t0));
+            const Vec3 B2 = A2 * ((t3 - s) / (t3 - t1)) + A3 * ((s - t1) / (t3 - t1));
+
+            return      B1 * ((t2 - s) / (t2 - t1)) + B2 * ((s - t1) / (t2 - t1));
+        };
+
+    auto getPoint = [&](int i) -> const Vec3&
+        {
+            return pos[((i % numPoint) + numPoint) % numPoint];
+        };
+
+    // Sample the spline densely — use enough steps per segment to not miss curvature
+    const int stepsPerSegment = 64;
+    std::vector<Vec3> denseSamples;
+    denseSamples.reserve(numPoint * stepsPerSegment);
+
+    for (int i = 0; i < pos.size(); i++)
+    {
+        const Vec3& p0 = getPoint(i - 1);
+        const Vec3& p1 = getPoint(i);
+        const Vec3& p2 = getPoint(i + 1);
+        const Vec3& p3 = getPoint(i + 2);
+        for (int step = 0; step < stepsPerSegment; step++)
+        {
+            const float t = static_cast<float>(step) / static_cast<float>(stepsPerSegment);
+            denseSamples.push_back(catmullRomAlpha(p0, p1, p2, p3, t));
+        }
+    }
+    denseSamples.push_back(pos.back());
+
+    std::vector<Vec3> result;
+    result.push_back(denseSamples.front());
+    float accumulated = 0.0f;
+
+    for (int i = 1; i < static_cast<int>(denseSamples.size()); i++)
+    {
+        const Vec3  segment = denseSamples[i] - denseSamples[i - 1];
+        const float segLen = segment.Length();
+
+        if (segLen == 0.0f)
+            continue;
+
+        float remaining = segLen;
+        float offset = 0.0f;
+
+        while (accumulated + remaining >= dist)
+        {
+            const float step = dist - accumulated;
+            offset += step;
+            remaining -= step;
+            accumulated = 0.0f;
+
+            const Vec3 dir = segment / segLen;
+            const Vec3 point = denseSamples[i - 1] + dir * offset;
+            result.push_back(point);
+        }
+
+        accumulated += remaining;
+    }
+
+    return result;
+}
+
+std::vector<Vec3> GenerateLateralPath(const std::vector<BotNode>& nodes, float lateralOffset, std::vector<Quadblock>& quadblocks)
+{
+    if (nodes.size() < 2)
+    {
+        std::vector<Vec3> fallback;
+        fallback.reserve(nodes.size());
+        for (const BotNode& node : nodes)
+            fallback.push_back(node.GetPos());
+        return fallback;
+    }
+
+    float sign = lateralOffset < 0 ? -1.0f : 1.0f;
+    const Vec3 up(0.0f, 1.0f, 0.0f);
+
+    // Check if a given XZ position falls within the XZ bounds of any quadblock with the given checkpoint ID
+    auto isAboveAnyQuadblock = [&](const Vec3& testPos, int checkpointID, float& height) -> bool
+        {
+            for (const Quadblock& quad : quadblocks)
+            {
+                if (quad.GetCheckpoint() > checkpointID + 1 || quad.GetCheckpoint() < checkpointID - 1)
+                    continue;
+                if (isAboveQuad(testPos, quad, height))
+                    return true;
+            }
+            return false;
+        };
+
+    std::vector<Vec3> result;
+    result.reserve(nodes.size());
+
+    float currLateralOffset = lateralOffset;
+    constexpr float reductionFactor = 0.8f;
+    constexpr int   maxAttempts = 10;
+
+    for (int i = 0; i < nodes.size(); i++)
+    {
+        const Vec3 nodePos = nodes[i].GetPos();
+        const int  checkpointID = static_cast<int>(nodes[i].GetGoBackCount());
+
+        Vec3 forward = nodes[(i == nodes.size() - 1) ? 0 : i + 1].GetPos() - nodes[i].GetPos();
+        forward.Normalize();
+
+        Vec3 right = forward.Cross(up);
+        right.Normalize();
+        if (right.Length() < EPSILON)
+            right = Vec3(1.0f, 0.0f, 0.0f);
+        float _ = 0.0f;
+        if (!isAboveAnyQuadblock(nodePos, checkpointID, _))
+        {
+            result.push_back(nodePos + right * currLateralOffset);
+            continue;
+        }
+
+        float tempLateralOffset = sign * std::fmin(std::abs(currLateralOffset) / reductionFactor, std::abs(lateralOffset));
+        Vec3 candidatePos;
+        float target_height = 0.0f;
+
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            candidatePos = nodePos + right * tempLateralOffset;
+            if (isAboveAnyQuadblock(candidatePos, checkpointID, target_height))
+            {
+                currLateralOffset = tempLateralOffset;
+                //candidatePos.y = target_height;
+                break;
+            }   
+            tempLateralOffset *= reductionFactor;
+        }
+        result.push_back(candidatePos);
+    }
+    return result;
+}
