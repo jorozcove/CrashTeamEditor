@@ -197,6 +197,50 @@ Model* Level::GetFilterModel()
 	return m_models[LevelModels::FILTER];
 }
 
+
+bool Level::GenerateSpawn(float colSpacing, float rowSpacing)
+{
+	if (m_checkpoints.size() < 2)
+		return false;
+
+	Vec3 up = { 0.0f, 1.0f, 0.0f };
+	Vec3 cp0 = m_checkpoints[0].GetPos();
+	Vec3 cp1 = m_checkpoints[1].GetPos();
+	Vec3 center = m_checkpoints[m_checkpoints[0].GetDown()].GetPos();
+	Vec3 forward = cp1 - cp0;
+	forward.y = 0;
+	float yaw = - std::atan2(forward.z, forward.x) * (180.0f / 3.14159265f);
+	yaw = std::fmod(yaw, 360.0f);
+	forward.Normalize();
+	Vec3 right = forward.Cross(up);
+
+	for (int row = 0; row < 2; row++)
+	{
+		for (int col = 0; col < 4; col++)
+		{
+			int index = row * 4 + col;
+			float lateralOffset = (col - 1.5f) * colSpacing;
+			float forwardOffset = (row - 0.5f) * rowSpacing;
+			Vec3 pos = center + right * lateralOffset + forward * forwardOffset;
+			bool isInRange = false;
+			for (const Quadblock& quad : m_quadblocks)
+			{
+				if (quad.GetCheckpoint() != m_checkpoints[0].GetDown())
+					continue;
+				if (isAboveQuad(pos, quad, pos.y))
+					isInRange = true;
+			}
+			if (!isInRange)
+				return false;
+			m_spawn[index].pos = pos;
+			m_spawn[index].rot.x = 0.0f;
+			m_spawn[index].rot.y = yaw;
+			m_spawn[index].rot.z = 0.0f;
+		}
+	}
+	return true;
+}
+
 bool Level::GenerateBSP()
 {
 	std::vector<size_t> quadIndexes;
@@ -326,7 +370,84 @@ std::vector<Vec3> Level::LoadPath(const std::filesystem::path& path)
 }
 
 
+void Level::GenerateBotPathChangeCode()
+{
+	// For each node on a path, find the closest node on the target path
+	// and set the PathChange and PathChangeIndex accordingly.
+	auto findClosestNode = [](const std::vector<BotNode>& targetNodes, const Vec3& pos) -> int
+		{
+			int   bestIndex = 0;
+			float bestDist = FLT_MAX;
+			for (int i = 0; i < static_cast<int>(targetNodes.size()); i++)
+			{
+				const Vec3& targetPos = targetNodes[i].GetPos();
+				const float dx = pos.x - targetPos.x;
+				const float dy = pos.y - targetPos.y;
+				const float dz = pos.z - targetPos.z;
+				const float dist = dx * dx + dy * dy + dz * dz; // squared, no need for sqrt
+				if (dist < bestDist)
+				{
+					bestDist = dist;
+					bestIndex = i;
+				}
+			}
+			return bestIndex;
+		};
 
+	// Validate that all 3 paths are valid before proceeding
+	for (int i = 0; i < 3; i++)
+	{
+		if (!m_botPaths[i].IsValid())
+		{
+			// Can't generate path change codes without all 3 paths
+			return;
+		}
+	}
+
+	const std::vector<BotNode>& leftNodes = m_botPaths[0].GetNodes();
+	const std::vector<BotNode>& middleNodes = m_botPaths[1].GetNodes();
+	const std::vector<BotNode>& rightNodes = m_botPaths[2].GetNodes();
+
+	// --- Path 0 (Left): can only switch to Middle (1) ---
+	for (int i = 0; i < static_cast<int>(leftNodes.size()); i++)
+	{
+		BotNode& node = m_botPaths[0].GetNode(i);
+		const int closestMid = findClosestNode(middleNodes, node.GetPos());
+		node.SetPathChange(1);
+		node.SetPathChangeIndex(closestMid);
+	}
+
+	// --- Path 2 (Right): can only switch to Middle (1) ---
+	for (int i = 0; i < static_cast<int>(rightNodes.size()); i++)
+	{
+		BotNode& node = m_botPaths[2].GetNode(i);
+		const int closestMid = findClosestNode(middleNodes, node.GetPos());
+		node.SetPathChange(1);
+		node.SetPathChangeIndex(closestMid);
+	}
+
+	// --- Path 1 (Middle): can switch to Left (0) or Right (2) ---
+	// Alternate between left and right to distribute switches evenly,
+	// so the AI doesn't always prefer one side.
+	for (int i = 0; i < static_cast<int>(middleNodes.size()); i++)
+	{
+		BotNode& node = m_botPaths[1].GetNode(i);
+		if (i % 2 == 0)
+		{
+			// Switch to Left
+			const int closestLeft = findClosestNode(leftNodes, node.GetPos());
+			node.SetPathChange(0);
+			node.SetPathChangeIndex(closestLeft);
+		}
+		else
+		{
+			// Switch to Right
+			const int closestRight = findClosestNode(rightNodes, node.GetPos());
+			node.SetPathChange(2);
+			node.SetPathChangeIndex(closestRight);
+		}
+	}
+}
 
 
 void Level::GenerateBotPathLeft()
@@ -1959,9 +2080,16 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 
 	for (int i = 0; i < BOT_PATH_COUNT; i++)
 	{
-		navTable.offAIPathArray[i] = currOffset;
-		serializedBotPaths.push_back(m_botPaths[i].Serialize());
-		currOffset += serializedBotPaths.back().size();
+		if (m_botPaths[i].IsValid())
+		{
+			navTable.offAIPathArray[i] = currOffset;
+			serializedBotPaths.push_back(m_botPaths[i].Serialize());
+			currOffset += serializedBotPaths.back().size();
+		}
+		else
+		{
+			navTable.offAIPathArray[i] = 0;
+		}
 	}
 
 
@@ -2101,7 +2229,8 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 
 	for (size_t i = 0; i < 3; i++)
 	{
-		pointerMap.push_back(CALCULATE_OFFSET(PSX::levAINavTable, offAIPathArray[i], offNavTable));
+		if (m_botPaths[i].IsValid())
+			pointerMap.push_back(CALCULATE_OFFSET(PSX::levAINavTable, offAIPathArray[i], offNavTable));
 	}
 
 	const size_t pointerMapBytes = pointerMap.size() * sizeof(uint32_t);

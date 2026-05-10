@@ -187,19 +187,33 @@ void App::InitUISettings()
 void App::SaveUISettings(bool useDefault)
 {
 	int width, height, xpos, ypos;
+	bool maximized = false;
 	if (useDefault)
 	{
 		width = 600;
 		height = 400;
 		ypos = 50;
 		xpos = 50;
+		maximized = false;
 	}
 	else
 	{
-		glfwGetWindowSize(m_window, &width, &height);
-		glfwGetWindowPos(m_window, &xpos, &ypos);
+		if (glfwGetWindowAttrib(m_window, GLFW_ICONIFIED))
+		{
+			width = Settings::w_width;
+			height = Settings::w_height;
+			xpos = Settings::w_x;
+			ypos = Settings::w_y;
+			maximized = Settings::w_maximized;
+		}
+		else
+		{
+			glfwGetWindowSize(m_window, &width, &height);
+			glfwGetWindowPos(m_window, &xpos, &ypos);
+			maximized = glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED);
+		}
 	}
-	bool maximized = glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED);
+
 	nlohmann::json json;
 	json["Width"] = width;
 	json["Height"] = height;

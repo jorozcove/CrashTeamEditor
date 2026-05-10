@@ -570,6 +570,23 @@ void Level::RenderUI(Renderer& renderer)
 	{
 		if (ImGui::Begin("Spawn", &Settings::w_spawn))
 		{
+			static std::string spawnButtonMessage;
+			static ButtonUI generateSpawnButton = ButtonUI();
+			static float spawnRowSpacing = 5.0f;
+			static float spawnColSpacing = 5.0f;
+
+			ImGui::SetNextItemWidth(200.0f);
+			ImGui::DragFloat("Row Spacing##spawnRowSpace", &spawnRowSpacing, 0.1f, 0.1f, 30.0f, "%.1f");
+			ImGui::SetNextItemWidth(200.0f);
+			ImGui::DragFloat("Column Spacing##spawnColSpace", &spawnColSpacing, 0.1f, 0.1f, 30.0f, "%.1f");
+
+			if (generateSpawnButton.Show("Generate from checkpoint", spawnButtonMessage, false))
+			{
+				if (GenerateSpawn(spawnColSpacing, spawnRowSpacing)) { spawnButtonMessage = "Successfully generated the spawn positions."; }
+				else { spawnButtonMessage = "Failed generating the spawn position."; }
+				GenerateRenderStartpointData();
+			}
+
 			for (size_t i = 0; i < NUM_DRIVERS; i++)
 			{
 				if (ImGui::TreeNode(("Driver " + std::to_string(i)).c_str()))
@@ -1376,7 +1393,8 @@ void Level::RenderUI(Renderer& renderer)
 		{
 			static std::filesystem::path s_objPaths[3];
 			static std::string s_objNames[3] = { "No file selected", "No file selected", "No file selected" };
-			static std::optional<bool> s_genResults[3];
+			static std::string generatePathButtonMessage[3];
+			static ButtonUI generatePathButton[3] = { ButtonUI(), ButtonUI(), ButtonUI() };
 
 			ImGui::SeparatorText("Settings");
 			ImGui::Checkbox("Use Manual Path", &m_botPathSettings.useManualPath);
@@ -1405,7 +1423,7 @@ void Level::RenderUI(Renderer& renderer)
 				ImGui::EndDisabled();
 				ImGui::SameLine();
 				ImGui::BeginDisabled(!m_botPathSettings.useManualPath);
-				if (ImGui::Button("Browse##selectbotpath"))
+				if (ImGui::Button(("Browse##selectbotpath" + std::to_string(i)).c_str()))
 				{
 					auto selection = pfd::open_file("Select Path OBJ", ".",
 						{ "OBJ Files", "*.obj", "All Files", "*" }).result();
@@ -1414,35 +1432,29 @@ void Level::RenderUI(Renderer& renderer)
 					{
 						s_objPaths[i] = selection[0];
 						s_objNames[i] = s_objPaths[i].filename().string();
-						s_genResults[i].reset();
 					}
 				}
 
 				ImGui::SameLine();
 
-				if (ImGui::Button("Clear"))
+				if (ImGui::Button(("Clear##selectbotpath" + std::to_string(i)).c_str()))
 				{
 					s_objPaths[i].clear();
 					s_objNames[i] = "No file selected";
-					s_genResults[i].reset();
 				}
 				ImGui::EndDisabled();
 
 				// Generate button
-				char genLabel[32];
-				std::snprintf(genLabel, sizeof(genLabel), "Generate BotPath %d", i);
-				if (ImGui::Button(genLabel))
-				{
-					s_genResults[i].reset();
 
+				if (generatePathButton[i].Show(("Generate BotPath " + std::to_string(i)).c_str(), generatePathButtonMessage[i], false))
+				{
+					bool success = false;
 					if (m_botPathSettings.useManualPath && !s_objPaths[i].empty())
 					{
 						std::vector<Vec3> vec = LoadPath(s_objPaths[i]);
-						if (m_botPathSettings.normalizeNodeDist) { vec = NormalizePos(vec, m_botPathSettings.nodeDistance); }
-						if (!vec.empty())
-							s_genResults[i] = m_botPaths[i].GeneratePath(vec, m_quadblocks);
-						else
-							s_genResults[i] = false;
+						if (m_botPathSettings.normalizeNodeDist)
+							vec = NormalizePos(vec, m_botPathSettings.nodeDistance); 
+						success = m_botPaths[i].GeneratePath(vec, m_quadblocks);
 					}
 					else
 					{
@@ -1455,40 +1467,30 @@ void Level::RenderUI(Renderer& renderer)
 							ckpt_id = m_checkpoints[ckpt_id].GetUp();
 						}
 
-						if (m_botPathSettings.normalizeNodeDist) { vec = NormalizePos(vec, m_botPathSettings.nodeDistance); }
+						if (m_botPathSettings.normalizeNodeDist) 
+							vec = NormalizePos(vec, m_botPathSettings.nodeDistance); 
 						if (i == 1) // Middle Path
 						{
-							s_genResults[i] = m_botPaths[i].GeneratePath(vec, m_quadblocks);
+							success = m_botPaths[i].GeneratePath(vec, m_quadblocks);
 						}
 						else
 						{
 							BotPath middlePath{};
 							middlePath.GeneratePath(vec, m_quadblocks);
 							vec = GenerateLateralPath(middlePath.GetNodes(), i == 0 ? -m_botPathSettings.sidewayOffset : +m_botPathSettings.sidewayOffset, m_quadblocks);
-							if (m_botPathSettings.normalizeNodeDist) { vec = NormalizePos(vec, m_botPathSettings.nodeDistance); }
-							s_genResults[i] = m_botPaths[i].GeneratePath(vec, m_quadblocks);
+							if (m_botPathSettings.normalizeNodeDist) 
+								vec = NormalizePos(vec, m_botPathSettings.nodeDistance);
+							success = m_botPaths[i].GeneratePath(vec, m_quadblocks);
 						}
-
 					}
-					UpdateRenderBotData();
-				}
 
-				if (s_genResults[i].has_value())
-				{
-					if (s_genResults[i].value())
-					{
-						ImGui::SameLine();
-						ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Generation succeeded!");
-					}
+					if (!success)
+						generatePathButtonMessage[i] = "Failed to generate BotPath";
 					else
-					{
-						ImGui::SameLine();
-						ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Generation failed!");
-					}
+						generatePathButtonMessage[i] = "Successfully generated BotPath";
+					UpdateRenderBotData();
+					GenerateBotPathChangeCode();
 				}
-
-				
-
 				m_botPaths[i].RenderUI(i);
 				if (i<2){ ImGui::Separator(); }
 				ImGui::PopID();

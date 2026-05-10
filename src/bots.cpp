@@ -20,7 +20,7 @@ std::vector<uint8_t> BotNode::Serialize(const Vec3& nextPos) const
     PSX::NavFrame frame = {};
     std::vector<uint8_t> buffer(sizeof(frame));
     frame.pos = ConvertVec3(m_pos, FP_ONE_GEO);
-    frame.rot[0] = AngleToBam(m_pitch);
+    frame.rot[0] = AngleToBam(45.0f);
     frame.rot[1] = AngleToBam(m_yaw);
     frame.rot[2] = AngleToBam(m_roll);
     frame.rot[3] = -frame.rot[0]; // Not sure what this is
@@ -71,13 +71,13 @@ bool isAboveQuad(const Vec3& point, const Quadblock& quad, float& height)
         const float d1 = (B.x - A.x) * (point.z - A.z) - (B.z - A.z) * (point.x - A.x);
         const float d2 = (C.x - B.x) * (point.z - B.z) - (C.z - B.z) * (point.x - B.x);
         const float d3 = (A.x - C.x) * (point.z - C.z) - (A.z - C.z) * (point.x - C.x);
-        if ((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))
+        if ((d1 < -EPSILON || d2 < -EPSILON || d3 < -EPSILON) && (d1 > EPSILON || d2 > EPSILON || d3 > EPSILON))
         {
             continue; // Point outisde of Tri
         }
 
         const float denom = (B.z - C.z) * (A.x - C.x) + (C.x - B.x) * (A.z - C.z);
-        if (std::abs(denom) < 1e-6f)
+        if (std::abs(denom) < EPSILON)
             continue; // degenerate triangle, skip
 
         const float u = ((B.z - C.z) * (point.x - C.x) + (C.x - B.x) * (point.z - C.z)) / denom;
@@ -89,6 +89,7 @@ bool isAboveQuad(const Vec3& point, const Quadblock& quad, float& height)
     }
     return false;
 }
+
 
 bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& quadblocks)
 {
@@ -141,9 +142,7 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
 
     m_nodes.resize(nodeCount);
 
-    // --- Pre-pass: detect air segments ---
-    // A node is in the air if it is not grounded.
-    // A jump starts at the last grounded node before becoming airborne.
+    // Pass 1 : Detect AirTime + Snap to Ground.
     std::vector<const Quadblock*> groundQuads(nodeCount);
     std::vector<bool> grounded(nodeCount);
     for (size_t i = 0; i < nodeCount; i++)
@@ -167,9 +166,6 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
                 continue;
 
             const float dist = std::abs(pos.y - height);
-            // Skip quads that are significantly below the node —
-            // these are lower floors, not the surface we want to snap to.
-            // Use a generous threshold to allow snapping down into a surface too.
             if (dist > bestDist)
                 continue;
             bestDist = dist;
@@ -190,7 +186,6 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
         float dx = next.x - curr.x;
         float dz = next.z - curr.z;
         float dy = next.y - curr.y;
-        float horizDist = std::sqrt(dx * dx + dz * dz);
 
         // Yaw from delta position — unaffected by surface normal
         yaws[i] = std::atan2(dx, dz) * (180.0f / 3.14159265f);
@@ -211,10 +206,7 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
     {
         const Vec3& curr = nodesPos[i];
         const Vec3& next = nodesPos[(i + 1) % nodeCount];
-        float dx = next.x - curr.x;
-        float dy = next.y - curr.y;
-        float dz = next.z - curr.z;
-        segmentDist[i] = std::sqrt(dx * dx + dy * dy + dz * dz);
+        segmentDist[i] = (next-curr).Length();
     }
 
     // Compute angular velocity (deg/unit) at each node
@@ -499,6 +491,7 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
 
 std::vector<uint8_t> BotPath::Serialize() const
 {
+    // Crash if called with invalid nodes. Never serialize empty path.
     PSX::NavHeader header = {};
     std::vector<uint8_t> buffer(sizeof(header));
     header.magic = BOT_PATH_MAGIC;
@@ -526,95 +519,90 @@ std::vector<uint8_t> BotPath::Serialize() const
 }
 
 
-std::vector<Vec3> NormalizePos(const std::vector<Vec3>& pos, float dist)
-// Take a list of Vec3, and use it at the base of a path (Catmull–Rom spline approximation), and return
-// a list of Vec3 spaced out by the same amount (dist) 
-{
+std::vector<Vec3> NormalizePos(const std::vector<Vec3>& pos, float dist) {
     int numPoint = pos.size();
-    if (numPoint < 2 || dist <= 0.0f)
-        return pos;
+    if (numPoint < 2 || dist <= 0.0f) return pos;
 
-    auto catmullRomAlpha = [](const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3, float t, float alpha = 0.5f) -> Vec3
-        {
-            auto getT = [alpha](float t, const Vec3& p0, const Vec3& p1) -> float
-                {
-                    const float dx = p1.x - p0.x;
-                    const float dy = p1.y - p0.y;
-                    const float dz = p1.z - p0.z;
-                    const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-                    return t + std::pow(dist, alpha);
-                };
+    auto catmullRomAlpha = [](const Vec3& p0, const Vec3& p1, const Vec3& p2, const Vec3& p3, float t, float alpha = 0.5f) -> Vec3 {
+        auto getT = [alpha](float t, const Vec3& p0, const Vec3& p1) -> float {
+            float d = (p1 - p0).Length(); // Assuming Vec3 has a Length() method
+            return t + std::pow(std::max(d, 1e-6f), alpha);
+            };
 
-            const float t0 = 0.0f;
-            const float t1 = getT(t0, p0, p1);
-            const float t2 = getT(t1, p1, p2);
-            const float t3 = getT(t2, p2, p3);
+        const float t0 = 0.0f;
+        const float t1 = getT(t0, p0, p1);
+        const float t2 = getT(t1, p1, p2);
+        const float t3 = getT(t2, p2, p3);
 
-            // Remap input t (0..1) to the actual parameter range (t1..t2)
-            const float s = t1 + t * (t2 - t1);
+        const float s = t1 + t * (t2 - t1);
 
-            const Vec3 A1 = p0 * ((t1 - s) / (t1 - t0)) + p1 * ((s - t0) / (t1 - t0));
-            const Vec3 A2 = p1 * ((t2 - s) / (t2 - t1)) + p2 * ((s - t1) / (t2 - t1));
-            const Vec3 A3 = p2 * ((t3 - s) / (t3 - t2)) + p3 * ((s - t2) / (t3 - t2));
+        const Vec3 A1 = p0 * ((t1 - s) / (t1 - t0)) + p1 * ((s - t0) / (t1 - t0));
+        const Vec3 A2 = p1 * ((t2 - s) / (t2 - t1)) + p2 * ((s - t1) / (t2 - t1));
+        const Vec3 A3 = p2 * ((t3 - s) / (t3 - t2)) + p3 * ((s - t2) / (t3 - t2));
 
-            const Vec3 B1 = A1 * ((t2 - s) / (t2 - t0)) + A2 * ((s - t0) / (t2 - t0));
-            const Vec3 B2 = A2 * ((t3 - s) / (t3 - t1)) + A3 * ((s - t1) / (t3 - t1));
+        const Vec3 B1 = A1 * ((t2 - s) / (t2 - t0)) + A2 * ((s - t0) / (t2 - t0));
+        const Vec3 B2 = A2 * ((t3 - s) / (t3 - t1)) + A3 * ((s - t1) / (t3 - t1));
 
-            return      B1 * ((t2 - s) / (t2 - t1)) + B2 * ((s - t1) / (t2 - t1));
+        return B1 * ((t2 - s) / (t2 - t1)) + B2 * ((s - t1) / (t2 - t1));
         };
 
-    auto getPoint = [&](int i) -> const Vec3&
-        {
-            return pos[((i % numPoint) + numPoint) % numPoint];
+    auto getPoint = [&](int i) -> const Vec3& {
+        return pos[((i % numPoint) + numPoint) % numPoint];
         };
 
-    // Sample the spline densely — use enough steps per segment to not miss curvature
+    // 1. Generate Dense Samples
     const int stepsPerSegment = 64;
     std::vector<Vec3> denseSamples;
     denseSamples.reserve(numPoint * stepsPerSegment);
 
-    for (int i = 0; i < pos.size(); i++)
-    {
+    for (int i = 0; i < numPoint; i++) {
         const Vec3& p0 = getPoint(i - 1);
         const Vec3& p1 = getPoint(i);
         const Vec3& p2 = getPoint(i + 1);
         const Vec3& p3 = getPoint(i + 2);
-        for (int step = 0; step < stepsPerSegment; step++)
-        {
-            const float t = static_cast<float>(step) / static_cast<float>(stepsPerSegment);
+
+        for (int step = 0; step < stepsPerSegment; step++) {
+            float t = (float)step / (float)stepsPerSegment;
             denseSamples.push_back(catmullRomAlpha(p0, p1, p2, p3, t));
         }
     }
-    denseSamples.push_back(pos.back());
+    // Add the very first point again at the end to "close" the dense loop for the distance walker
+    denseSamples.push_back(denseSamples.front());
 
+    // 2. Distribute points by 'dist'
     std::vector<Vec3> result;
-    result.push_back(denseSamples.front());
     float accumulated = 0.0f;
 
-    for (int i = 1; i < static_cast<int>(denseSamples.size()); i++)
-    {
-        const Vec3  segment = denseSamples[i] - denseSamples[i - 1];
-        const float segLen = segment.Length();
+    // We start by adding the first point
+    result.push_back(denseSamples.front());
 
-        if (segLen == 0.0f)
-            continue;
+    for (size_t i = 1; i < denseSamples.size(); i++) {
+        Vec3 segment = denseSamples[i] - denseSamples[i - 1];
+        float segLen = segment.Length();
+        if (segLen <= 0.00001f) continue;
 
-        float remaining = segLen;
-        float offset = 0.0f;
+        accumulated += segLen;
 
-        while (accumulated + remaining >= dist)
-        {
-            const float step = dist - accumulated;
-            offset += step;
-            remaining -= step;
-            accumulated = 0.0f;
+        while (accumulated >= dist) {
+            float overshot = accumulated - dist;
+            float ratio = (segLen - overshot) / segLen;
+            Vec3 newPoint = denseSamples[i - 1] + segment * ratio;
 
-            const Vec3 dir = segment / segLen;
-            const Vec3 point = denseSamples[i - 1] + dir * offset;
-            result.push_back(point);
+            result.push_back(newPoint);
+
+            // Prepare for next potential point in same segment
+            accumulated = overshot;
+            // In a loop, we usually don't want the last point to overlap the first.
+            // If the last point is extremely close to the first, you might want to break.
         }
+    }
 
-        accumulated += remaining;
+    // Since it's a loop, the very last point in 'result' might be very close to result[0].
+    // Depending on your needs, you might want to pop_back() the last point if it's too close.
+    if (result.size() > 1) {
+        if ((result.back() - result.front()).Length() < dist * 0.5f) {
+            result.pop_back();
+        }
     }
 
     return result;

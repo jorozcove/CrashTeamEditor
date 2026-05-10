@@ -91,6 +91,8 @@ private:
 	bool SetGhostData(const std::filesystem::path& path, bool tropy);
 	bool UpdateVRM();
 	std::vector<uint16_t> ReadRawVRAM(std::filesystem::path vrmPath);
+	void GenerateBotPathChangeCode();
+	bool GenerateSpawn(float colSpacing, float rowSpacing);
 	bool GenerateCheckpoints();
 	bool GenerateBSP();
 
