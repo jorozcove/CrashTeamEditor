@@ -8,10 +8,18 @@
 #include <cstdint>
 #include <vector>
 
+//Yaw : 0 yaw -> +Z ;; 90 yaw -> +X
+// Pitch : Positive is downward.
 // BAM (Binary Angle Measurement) conversion for rot[], which uses 256 units per full circle
 // stored as int8, distinct from the FP_ONE fixed-point system used elsewhere.
 static inline float BamToAngle(int8_t bam) { return (static_cast<float>(bam) * 360.0f) / 256.0f; }
-static inline int8_t AngleToBam(float deg) { return static_cast<int8_t>(std::round((deg * 256.0f) / 360.0f)); }
+static inline int8_t AngleToBam(float deg) {
+    // Normalize to [-180, 180) first
+    deg = std::fmod(deg, 360.0f);
+    if (deg >= 180.0f)  deg -= 360.0f;
+    if (deg < -180.0f)  deg += 360.0f;
+    return static_cast<int8_t>(std::round((deg * 256.0f) / 360.0f));
+}
 
 static constexpr uint16_t BOT_PATH_MAGIC = 0xECFD;
 struct BotNodeFlags

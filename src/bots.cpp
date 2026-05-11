@@ -20,7 +20,7 @@ std::vector<uint8_t> BotNode::Serialize(const Vec3& nextPos) const
     PSX::NavFrame frame = {};
     std::vector<uint8_t> buffer(sizeof(frame));
     frame.pos = ConvertVec3(m_pos, FP_ONE_GEO);
-    frame.rot[0] = AngleToBam(45.0f);
+    frame.rot[0] = AngleToBam(m_pitch); 
     frame.rot[1] = AngleToBam(m_yaw);
     frame.rot[2] = AngleToBam(m_roll);
     frame.rot[3] = -frame.rot[0]; // Not sure what this is
@@ -105,7 +105,7 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
     constexpr float DRIFT_BONUS_YAW = 45; // degrees, for drift yaw addition
     constexpr float SKIDMARK_LENGTH = 15.0f; // degrees, for drift yaw addition
     constexpr float BOT_SPEED = 25.0f;
-    constexpr float SHARP_TURN_CIRCLE_SECONDS = 5.0f;
+    constexpr float SHARP_TURN_CIRCLE_SECONDS = 10.0f;
     constexpr float SHARP_TURN_DEG_PER_UNIT = 360.0f / (BOT_SPEED * SHARP_TURN_CIRCLE_SECONDS); // 2.4 deg/unit
     constexpr float DRIFT_MIN_DISTANCE = 25.0f;   // at least 2s worth of distance
     constexpr int   DRIFT_ANTICIPATION_NODES = 2; // start drift this many nodes before the sharp section
@@ -142,15 +142,19 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
 
     m_nodes.resize(nodeCount);
 
-    // Pass 1 : Detect AirTime + Snap to Ground.
+    // Pass 1 : Detect AirTime + Snap to Ground + construct up vec list
     std::vector<const Quadblock*> groundQuads(nodeCount);
     std::vector<bool> grounded(nodeCount);
+    std::vector<Vec3> upVec(nodeCount);
+    std::vector<Vec3> forwardVec(nodeCount);
+    std::vector<float> segmentDist(nodeCount);
     for (size_t i = 0; i < nodeCount; i++)
     {
         Vec3        pos = nodesPos[i];
         float       bestDist = GROUND_THRESHOLD;
-        float       bestSurfaceY = pos.y;
 
+        grounded[i] = false;
+        upVec[i] = { 0.0f, 1.0f, 0.0f };
         for (const Quadblock& quad : quadblocks)
         {
             if (!(quad.GetFlags() & QuadFlags::GROUND))
@@ -170,46 +174,29 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
                 continue;
             bestDist = dist;
             groundQuads[i] = &quad;
+            upVec[i] = quad.GetNormal();
+            upVec[i].Normalize();
             pos.y = height;
+            grounded[i] = true;
         }
-        grounded[i] = bestDist < GROUND_THRESHOLD;
         m_nodes[i].SetPos(pos); 
     }
 
     /// --- Pre-pass: compute yaw ---
     std::vector<float> yaws(nodeCount);
-    std::vector<float> pitches(nodeCount);
     for (size_t i = 0; i < nodeCount; i++)
     {
         const Vec3& curr = nodesPos[i];
         const Vec3& next = nodesPos[(i + 1) % nodeCount];
-        float dx = next.x - curr.x;
-        float dz = next.z - curr.z;
-        float dy = next.y - curr.y;
-
-        // Yaw from delta position — unaffected by surface normal
-        yaws[i] = std::atan2(dx, dz) * (180.0f / 3.14159265f);
-        m_nodes[i].SetYaw(yaws[i]);
+        const Vec3 delta = next - curr;
+        forwardVec[i] = delta - upVec[i] * (upVec[i].Dot(delta));
+        forwardVec[i].Normalize();
+        yaws[i] = std::atan2(delta.x, delta.z) * (180.0f / 3.14159265f);
+        segmentDist[i] = delta.Length();
     }
 
 
     // --- Pre-pass: drift ---
-
-    // Issue 1 fix: convert yaw delta to angular velocity (degrees per unit of distance)
-    // A full circle in 6 seconds at 25 units/s = 150 units of distance per full circle
-    // = 360 / 150 = 2.4 degrees per unit -> anything tighter is a sharp turn
-
-
-    // Compute distance between consecutive nodes
-    std::vector<float> segmentDist(nodeCount);
-    for (size_t i = 0; i < nodeCount; i++)
-    {
-        const Vec3& curr = nodesPos[i];
-        const Vec3& next = nodesPos[(i + 1) % nodeCount];
-        segmentDist[i] = (next-curr).Length();
-    }
-
-    // Compute angular velocity (deg/unit) at each node
     std::vector<float> angularVel(nodeCount);
     for (size_t i = 0; i < nodeCount; i++)
     {
@@ -219,8 +206,6 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
         angularVel[i] = yawDelta / dist; // degrees per unit of distance
     }
 
-    // Issue 2 fix: find raw sharp-turn sections first, then expand them
-    // Step 1: mark nodes that are intrinsically sharp (by angular velocity)
     std::vector<int> driftDir(nodeCount, 0); // -1 = right, 0 = none, +1 = left
     for (size_t i = 0; i < nodeCount; i++)
     {
@@ -229,110 +214,128 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
             driftDir[i] = (angularVel[i] > 0.0f) ? 1 : -1;
     }
 
-    // Step 2: find contiguous sharp sections, extend them to minimum distance,
-    // and add anticipation nodes before each section
-    // We iterate over nodes and collect "drift chunks"
-    struct DriftChunk { size_t start; size_t end; int dir; }; // [start, end) inclusive
-    std::vector<DriftChunk> chunks;
+    struct DriftChunk {
+        size_t start, end; // inclusive indices
+        int dir;           // -1 or +1
+    };
 
-    size_t i = 0;
-    while (i < nodeCount)
-    {
-        if (driftDir[i] == 0) { i++; continue; }
+    // Helper: sum of segmentDist[start..end] inclusive
+    auto chunkDist = [&](size_t start, size_t end) {
+        float d = 0.f;
+        for (size_t i = start; i <= end; i++) d += segmentDist[i];
+        return d;
+        };
 
-        // Found the beginning of a sharp section
-        int dir = driftDir[i];
-        size_t chunkStart = i;
+    // Helper: distance of the gap between two chunks (exclusive indices between them)
+    auto gapDist = [&](const DriftChunk& a, const DriftChunk& b) {
+        float d = 0.f;
+        for (size_t i = a.end + 1; i < b.start; i++) d += segmentDist[i];
+        return d;
+        };
 
-        // Extend while still sharp and same direction
-        while (i < nodeCount && driftDir[i] == dir) { i++; }
-        size_t chunkEnd = i - 1; // last sharp node (inclusive)
-
-        // Extend end forward until minimum distance is covered
-        float coveredDist = 0.0f;
-        for (size_t k = chunkStart; k <= chunkEnd; k++)
-            coveredDist += segmentDist[k];
-
-        size_t extendedEnd = chunkEnd;
-        while (coveredDist < DRIFT_MIN_DISTANCE)
-        {
-            size_t next = (extendedEnd + 1) % nodeCount;
-            if (!grounded[next]) { break; } // don't extend into air
-            coveredDist += segmentDist[extendedEnd];
-            extendedEnd = next;
-            if (extendedEnd == chunkStart) { break; } // full loop guard
-        }
-
-        chunks.push_back({ chunkStart, extendedEnd, dir });
-    }
-
-    // Step 3: apply anticipation — shift each chunk's start back by DRIFT_ANTICIPATION_NODES
-    // then write drift flags into m_nodes
-    for (const DriftChunk& chunk : chunks)
-    {
-        // Walk back anticipation nodes, staying on ground
-        size_t anticipatedStart = chunk.start;
-        for (int k = 0; k < DRIFT_ANTICIPATION_NODES; k++)
-        {
-            size_t prev = (anticipatedStart + nodeCount - 1) % nodeCount;
-            if (!grounded[prev]) { break; }
-            anticipatedStart = prev;
-        }
-
-        // Apply drift flags to all nodes in [anticipatedStart .. chunk.end]
-        size_t j = anticipatedStart;
-        while (true)
-        {
-            uint16_t flags = m_nodes[j].GetFlags();
-            if (chunk.dir < 0)
-            {
-                flags |= BotNodeFlags::DRIFT_LEFT;
-                yaws[j] += DRIFT_BONUS_YAW;
+    // Helper: rebuild DriftChunk list from current driftDir array
+    auto buildChunks = [&]() {
+        std::vector<DriftChunk> chunks;
+        size_t i = 0;
+        while (i < nodeCount) {
+            if (driftDir[i] != 0) {
+                size_t s = i;
+                while (i < nodeCount && driftDir[i] == driftDir[s]) i++;
+                chunks.push_back({ s, i - 1, driftDir[s] });
             }
-            else
-            {
-                flags |= BotNodeFlags::DRIFT_RIGHT;
-                yaws[j] -= DRIFT_BONUS_YAW;
+            else {
+                i++;
             }
-            m_nodes[j].SetFlags(flags);
-            if (j == chunk.end) { break; }
-            j = (j + 1) % nodeCount;
+        }
+        return chunks;
+        };
+
+    const float MIN_DRIFT_DIST = 15.0f;
+    const float MIN_GAP_DIST = 15.0f;
+
+    // --- Step 1: Merge same-direction chunks that are too close ---
+    auto chunks = buildChunks();
+    for (size_t i = 0; i + 1 < chunks.size(); i++) 
+    {
+        auto& a = chunks[i];
+        auto& b = chunks[i + 1];
+        if (a.dir == b.dir && gapDist(a, b) < MIN_GAP_DIST) 
+        {
+            for (size_t j = a.end + 1; j < b.start; j++) 
+                driftDir[j] = a.dir;
         }
     }
 
-    // After applying drift bonus yaw, recompute pitch for affected nodes
-    // since pitch depends on the forward axis which changed with yaw
+    // --- Step 2: Remove drift chunks shorter than MIN_DRIFT_DIST ---
+    auto chunks = buildChunks();
+    for (auto& c : chunks) {
+        if (chunkDist(c.start, c.end) < MIN_DRIFT_DIST) {
+            for (size_t i = c.start; i <= c.end; i++) driftDir[i] = 0;
+        }
+    }
+
+
+
+    // --- Step 3: Trim first chunk when different-direction chunks are too close ---
+    changed = true;
+    while (changed) {
+        changed = false;
+        auto chunks = buildChunks();
+        for (size_t i = 0; i + 1 < chunks.size(); i++) {
+            auto& a = chunks[i];
+            auto& b = chunks[i + 1];
+            if (a.dir != b.dir && gapDist(a, b) < MIN_GAP_DIST) {
+                float deficit = MIN_GAP_DIST - gapDist(a, b);
+                // Trim from the end of chunk A, node by node
+                size_t j = a.end;
+                float trimmed = 0.f;
+                while (j >= a.start && trimmed < deficit) {
+                    trimmed += segmentDist[j];
+                    driftDir[j] = 0;
+                    if (j == 0) break;
+                    j--;
+                }
+                changed = true;
+                break;
+            }
+        }
+    }
+
+    // --- Step 4: After trimming, some chunks may now be too short — repeat step 2 ---
+    auto chunks = buildChunks();
+    for (auto& c : chunks) {
+        if (chunkDist(c.start, c.end) < MIN_DRIFT_DIST) {
+            for (size_t i = c.start; i <= c.end; i++) driftDir[i] = 0;
+        }
+    }
+
+
+    // Once driftDir is up to date, set the drift flag, and rotate forward.
     for (size_t i = 0; i < nodeCount; i++)
     {
-        uint16_t flags = m_nodes[i].GetFlags();
-        bool isDrifting = (flags & (BotNodeFlags::DRIFT_LEFT | BotNodeFlags::DRIFT_RIGHT)) != 0;
-        if (!isDrifting || !grounded[i] || !groundQuads[i]) { continue; }
-
-        Vec3 surfaceNormal = groundQuads[i]->GetNormal();
-        float yawRad = yaws[i] * (3.14159265f / 180.0f); // now includes drift bonus
-        Vec3 forward = { std::sin(yawRad), 0.0f, std::cos(yawRad) };
-
-        float fwdDotN = forward.x * surfaceNormal.x
-            + forward.y * surfaceNormal.y
-            + forward.z * surfaceNormal.z;
-        Vec3 forwardOnSurface = {
-            forward.x - fwdDotN * surfaceNormal.x,
-            forward.y - fwdDotN * surfaceNormal.y,
-            forward.z - fwdDotN * surfaceNormal.z
-        };
-        float len = std::sqrt(forwardOnSurface.x * forwardOnSurface.x
-            + forwardOnSurface.y * forwardOnSurface.y
-            + forwardOnSurface.z * forwardOnSurface.z);
-        if (len > 1e-6f)
-        {
-            forwardOnSurface.x /= len;
-            forwardOnSurface.y /= len;
-            forwardOnSurface.z /= len;
-        }
-        pitches[i] = -std::asin(std::clamp(forwardOnSurface.y, -1.0f, 1.0f))
-            * (180.0f / 3.14159265f);
+        m_nodes[i].SetYaw(std::atan2(forwardVec[i].x, forwardVec[i].z) * (180.0f / 3.14159265f));
     }
 
+
+    const float DRIFT_ANGLE_DEG = 30.0f;
+    const float DRIFT_ANGLE_RAD = DRIFT_ANGLE_DEG * (3.14159265f / 180.0f);
+    for (size_t i = 0; i < nodeCount; i++)
+    {
+        //Rotate forward to simulate drift.
+        /*Vec3& forward = forwardVec[i];
+        Vec3& up = upVec[i];
+        float angle = driftDir[i] * DRIFT_ANGLE_RAD;
+        forwardVec[i] = forward * std::cos(angle) + (up.Cross(forward)) * std::sin(angle);*/
+
+        if (driftDir[i] == 1)
+        {
+            m_nodes[i].SetFlags(BotNodeFlags::DRIFT_RIGHT);
+        }
+        if (driftDir[i] == -1)
+        {
+            m_nodes[i].SetFlags(BotNodeFlags::DRIFT_LEFT);
+        }
+    }
 
     uint8_t lastckpt = 0;
     for (size_t i = 0; i < nodeCount; i++)
@@ -345,39 +348,13 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
         bool isGrounded = grounded[i];
 
         // --- Rotation ---
+        Vec3& forward = forwardVec[i];
+        Vec3& up = upVec[i];
+        Vec3 right = forward.Cross(up);
+        node.SetPitch(-std::asin(forward.y) * (180.0f / 3.14159265f));
+       // node.SetYaw(std::atan2(forward.x, forward.z) * (180.0f / 3.14159265f));
+        node.SetRoll(std::atan2(-right.y, up.y) * (180.0f / 3.14159265f));
         
-        node.SetPitch(pitches[i]);
-
-        // Roll from surface normal: project the normal onto the node's right axis
-        // Right axis is perpendicular to the forward (yaw) direction in XZ
-        float yawRad = yaws[i] * (3.14159265f / 180.0f);
-        // Forward direction from yaw (matching our convention: 0 = +Z, 90 = +X)
-        Vec3 forward = { std::sin(yawRad), 0.0f, std::cos(yawRad) };
-        Vec3 rightAxis = { std::cos(yawRad), 0.0f, -std::sin(yawRad) };
-
-        if (groundQuad && isGrounded)
-        {
-            Vec3 normal = groundQuads[i]->GetNormal();
-
-            // Remove the forward component from the normal to get the lateral tilt only
-            float fwdDot = normal.x * forward.x + normal.y * forward.y + normal.z * forward.z;
-            Vec3 normalLateral = {
-                normal.x - fwdDot * forward.x,
-                normal.y - fwdDot * forward.y,
-                normal.z - fwdDot * forward.z
-            };
-
-            // The roll is the angle this lateral component makes with world up (0,1,0)
-            // atan2 of the X component vs Y component gives signed roll
-            float rollDeg = std::atan2(normalLateral.x, normalLateral.y) * (180.0f / 3.14159265f);
-            //float rollDeg = std::atan2(normal.x, normal.y) * (180.0f / 3.14159265f);
-            node.SetRoll(rollDeg);
-        }
-        else
-        {
-            node.SetRoll(0.0f);
-        }
-
         // --- Terrain & go back count from ground quad ---
         
         if (groundQuad)

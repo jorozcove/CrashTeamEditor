@@ -223,9 +223,11 @@ bool Level::GenerateSpawn(float colSpacing, float rowSpacing)
 			float forwardOffset = (row - 0.5f) * rowSpacing;
 			Vec3 pos = center + right * lateralOffset + forward * forwardOffset;
 			bool isInRange = false;
+			int lastCkpt = m_checkpoints[0].GetDown();
+			int prevCkpt = m_checkpoints[lastCkpt].GetDown();
 			for (const Quadblock& quad : m_quadblocks)
 			{
-				if (quad.GetCheckpoint() != m_checkpoints[0].GetDown())
+				if (quad.GetCheckpoint() != lastCkpt && quad.GetCheckpoint() != prevCkpt)
 					continue;
 				if (isAboveQuad(pos, quad, pos.y))
 					isInRange = true;
