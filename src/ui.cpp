@@ -77,6 +77,17 @@ void UI::MainMenu()
 				}
 			}
 
+			if (ImGui::MenuItem("Save OBJ", nullptr, nullptr, m_lev.IsLoaded()))
+			{
+				auto selection = pfd::save_file("Level Folder", m_lev.GetParentPath().string(), { "OBJ Files", "*.obj" }, pfd::opt::force_path).result();
+				if (!selection.empty())
+				{
+					std::filesystem::path objPath = selection;
+					if (!objPath.has_extension()) { objPath.replace_extension(".obj"); }
+					m_lev.SaveOBJ(objPath);
+				}
+			}
+
 			if (ImGui::MenuItem("Hot Reload")) { m_lev.OpenHotReloadWindow(); }
 
 			ImGui::BeginDisabled(!m_lev.IsLoaded());

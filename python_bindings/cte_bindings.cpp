@@ -356,6 +356,7 @@ void init_crashteameditor(py::module_& m)
 		.def_property("checkpoint_status", &Quadblock::GetCheckpointStatus, &Quadblock::SetCheckpointStatus)
 		.def_property("checkpoint_pathable", &Quadblock::GetCheckpointPathable, &Quadblock::SetCheckpointPathable)
 		.def_property("vistree_transparent", &Quadblock::GetVisTreeTransparent, &Quadblock::SetVisTreeTransparent)
+		.def_property("z_depth_bias", &Quadblock::GetDrawOrderHigh, &Quadblock::SetDrawOrderHigh)
 		.def_property("tex_path",
 			[](const Quadblock& qb) { return std::filesystem::path(qb.GetTexPath()); },
 			&Quadblock::SetTexPath)
@@ -532,35 +533,24 @@ void init_crashteameditor(py::module_& m)
 		.def("generate", &BSP::Generate, py::arg("quadblocks"), py::arg("max_quads_per_leaf"), py::arg("max_axis_length"));
 
 
+	py::class_<BitMatrix>(m, "VisTree")
+		.def(py::init<>())
+		.def("get", &BitMatrix::Get, py::arg("x"), py::arg("y"))
+		.def("set", &BitMatrix::Set, py::arg("val"), py::arg("x"), py::arg("y"));
+
+
+
 	py::class_<BotNode>(m, "BotNode")
 		.def(py::init<>())
-		.def_property("pos",
-			[](const BotNode& n) { return n.GetPos(); },
-			[](BotNode& n, const Vec3& v) { n.SetPos(v); })
-		.def_property("yaw",
-			&BotNode::GetYaw,
-			&BotNode::SetYaw)
-		.def_property("pitch",
-			&BotNode::GetPitch,
-			&BotNode::SetPitch)
-		.def_property("roll",
-			&BotNode::GetRoll,
-			&BotNode::SetRoll)
-		.def_property("flags",
-			&BotNode::GetFlags,
-			&BotNode::SetFlags)
-		.def_property("go_back_count",
-			&BotNode::GetGoBackCount,
-			&BotNode::SetGoBackCount)
-		.def_property("path_change",
-			&BotNode::GetPathChange,
-			&BotNode::SetPathChange)
-		.def_property("path_change_index",
-			&BotNode::GetPathChangeIndex,
-			&BotNode::SetPathChangeIndex)
-		.def_property("special_bits",
-			&BotNode::GetSpecialBits,
-			&BotNode::SetSpecialBits);
+		.def_property("pos", [](const BotNode& n) { return n.GetPos(); },[](BotNode& n, const Vec3& v) { n.SetPos(v); })
+		.def_property("yaw",&BotNode::GetYaw,&BotNode::SetYaw)
+		.def_property("pitch",&BotNode::GetPitch,&BotNode::SetPitch)
+		.def_property("roll",&BotNode::GetRoll,&BotNode::SetRoll)
+		.def_property("flags",&BotNode::GetFlags,&BotNode::SetFlags)
+		.def_property("go_back_count",&BotNode::GetGoBackCount,&BotNode::SetGoBackCount)
+		.def_property("path_change",&BotNode::GetPathChange,&BotNode::SetPathChange)
+		.def_property("path_change_index", &BotNode::GetPathChangeIndex, &BotNode::SetPathChangeIndex)
+		.def_property("special_bits", &BotNode::GetSpecialBits, &BotNode::SetSpecialBits);
 
 
 	py::class_<Level> level(m, "Level");
@@ -576,9 +566,10 @@ void init_crashteameditor(py::module_& m)
 		.def_property_readonly("name", &Level::GetName, py::return_value_policy::copy)
 		.def_property_readonly("quadblocks", &Level::GetQuadblocks, py::return_value_policy::reference_internal)
 		.def_property_readonly("bsp", &Level::GetBSP, py::return_value_policy::reference_internal)
+		.def_property_readonly("vistree", &Level::GetVisTree, py::return_value_policy::reference_internal)
 		.def_property_readonly("checkpoints", &Level::GetCheckpoints, py::return_value_policy::reference_internal)
 		.def_property_readonly("checkpoint_paths", &Level::GetCheckpointPaths, py::return_value_policy::reference_internal)
-		.def_property_readonly("bot_path_left", &Level::GetBotPathLeft, py::return_value_policy::reference_internal)
+		.def("bot_path", &Level::GetBotPath, py::arg("path_index"), py::return_value_policy::reference_internal)
 		.def_property_readonly("model_level", &Level::GetLevelModel, py::return_value_policy::reference_internal)
 		.def_property_readonly("model_bsp", &Level::GetBspModel, py::return_value_policy::reference_internal)
 		.def_property_readonly("model_spawn", &Level::GetSpawnModel, py::return_value_policy::reference_internal)

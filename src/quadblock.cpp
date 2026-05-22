@@ -391,9 +391,11 @@ Quadblock::Quadblock(const std::string& name, Quad& q0, Quad& q1, Quad& q2, Quad
 Quadblock::Quadblock(const PSX::Quadblock& quadblock, const std::vector<PSX::Vertex>& vertices, UpdateFilterCallback filterCallback)
 {
 	uint16_t reverseIndexMapping[NUM_VERTICES_QUADBLOCK] = {0, 2, 6, 8, 1, 3, 4, 5, 7};
+	std::unordered_set<uint16_t> indexes;
 	for (size_t i = 0; i < NUM_VERTICES_QUADBLOCK; i++)
 	{
 		uint16_t index = quadblock.index[i];
+		indexes.insert(index);
 		const PSX::Vertex& vertex = vertices[index];
 		m_p[reverseIndexMapping[i]] = Vertex(vertex);
 	}
@@ -423,9 +425,8 @@ Quadblock::Quadblock(const PSX::Quadblock& quadblock, const std::vector<PSX::Ver
 	if (m_checkpointIndex == std::numeric_limits<uint8_t>::max()) { m_checkpointIndex = -1; }
 	else { m_checkpointStatus = true; }
 	m_material = "default";
-	m_triblock = false;
+	m_triblock = indexes.size() == 6;
 	m_filterCallback = filterCallback;
-	//printf("%s at texoffset : %zu\n", m_name, m_offTextures[0]);
 		
 }
 

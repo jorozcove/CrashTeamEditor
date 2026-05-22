@@ -267,7 +267,7 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
     }
 
     // --- Step 2: Remove drift chunks shorter than MIN_DRIFT_DIST ---
-    auto chunks = buildChunks();
+    chunks = buildChunks();
     for (auto& c : chunks) {
         if (chunkDist(c.start, c.end) < MIN_DRIFT_DIST) {
             for (size_t i = c.start; i <= c.end; i++) driftDir[i] = 0;
@@ -277,10 +277,10 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
 
 
     // --- Step 3: Trim first chunk when different-direction chunks are too close ---
-    changed = true;
+    bool changed = true;
     while (changed) {
         changed = false;
-        auto chunks = buildChunks();
+        chunks = buildChunks();
         for (size_t i = 0; i + 1 < chunks.size(); i++) {
             auto& a = chunks[i];
             auto& b = chunks[i + 1];
@@ -302,7 +302,7 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
     }
 
     // --- Step 4: After trimming, some chunks may now be too short — repeat step 2 ---
-    auto chunks = buildChunks();
+    chunks = buildChunks();
     for (auto& c : chunks) {
         if (chunkDist(c.start, c.end) < MIN_DRIFT_DIST) {
             for (size_t i = c.start; i <= c.end; i++) driftDir[i] = 0;

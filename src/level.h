@@ -46,14 +46,16 @@ public:
 	bool Load(const std::filesystem::path& filename);
 	bool Save(const std::filesystem::path& path);
 	bool SaveLEV(const std::filesystem::path& path, bool useRawTexture);
+	bool SaveOBJ(const std::filesystem::path& objFile);
 	bool IsLoaded() const;
 	void Clear(bool clearErrors);
 	const std::string& GetName() const;
 	std::vector<Quadblock>& GetQuadblocks();
 	BSP& GetBSP();
+	BitMatrix& GetVisTree();
 	std::vector<Checkpoint>& GetCheckpoints();
 	std::vector<Path>& GetCheckpointPaths();
-	std::vector<BotNode>& GetBotPathLeft();
+	std::vector<BotNode>& GetBotPath(int i);
 	const std::filesystem::path& GetParentPath() const;
 	std::vector<std::string> GetMaterialNames() const;
 	std::vector<size_t> GetMaterialQuadblockIndexes(const std::string& material) const;
