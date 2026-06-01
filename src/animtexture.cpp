@@ -40,7 +40,7 @@ AnimTexture::AnimTexture(const std::string& animName, const std::filesystem::pat
 
 	size_t refQuadIdx = quadIndices[0];
 	const Quadblock& refQuad = quadblocks[refQuadIdx];
-	bool isTriblock = !refQuad.IsQuadblock();
+	bool isTriblock = false;//!refQuad.IsQuadblock();
 
 	objFile << "mtllib frames.mtl\n";
 
@@ -123,7 +123,7 @@ AnimTexture::AnimTexture(const std::string& animName, const std::filesystem::pat
 		int vtOffset = static_cast<int>(frameIdx * 16) + 1;
 		int vnOffset = static_cast<int>(frameIdx * 3) + 1;
 
-		if (isTriblock)
+		if (isTriblock) // should be removed, always load as quadblock ?
 		{
 			objFile << "f " << (vOffset + 0) << "/" << (vtOffset + 0) << "/" << (vnOffset + 0) << " "
 				<< (vOffset + 1) << "/" << (vtOffset + 1) << "/" << (vnOffset + 0) << " "

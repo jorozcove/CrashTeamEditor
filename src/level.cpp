@@ -1116,8 +1116,10 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		Read(file, psxQuad);
 		std::streampos currentPosQuad = file.tellg();
 		for (int f = 0; f < NUM_FACES_QUADBLOCK + 1; f++)
-		{	
+		{
 			uint32_t texOffset = f == NUM_FACES_QUADBLOCK ? psxQuad.offLowTexture : psxQuad.offMidTextures[f];
+
+			// How to know if a texture is animated or not : POINTERFLAG. ODD = ANIMTEX. EVEN = STATICTEX
 			if (hasAnimData && texOffset >= offAnimStart && pointerMap.contains(texOffset - 1)) // Anim Textures
 			{
 				if (!m_rawAnimTex.contains(texOffset-1))
@@ -1361,6 +1363,10 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 				m_animTextures.push_back(animTexture);
 				processedPatterns.insert(faceMap);
 			}
+			else
+			{
+				printf("WARNING : Empty animtex\n");
+			}
 		}
 	}
 
@@ -1434,6 +1440,40 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 
 			const size_t visNodeSize = (bspNodes.size() + 31) / 32;
 
+			auto decompressVisNodes = [&](std::streampos srcPos) -> std::vector<uint32_t>
+				{
+					std::vector<uint8_t> dst(visNodeSize * sizeof(uint32_t), 0);
+					file.seekg(srcPos);
+					size_t dstIdx = 0;
+					while (dstIdx < dst.size())
+					{
+						int8_t c;
+						Read(file, c);
+						if (c == 0) { break; }
+						if (c < 0)
+						{
+							int count = (-c) + 1;
+							uint8_t val;
+							Read(file, val);
+							for (int i = 0; i < count && dstIdx < dst.size(); i++)
+								dst[dstIdx++] = val;
+						}
+						else
+						{
+							int count = c;
+							for (int i = 0; i < count && dstIdx < dst.size(); i++)
+							{
+								uint8_t val;
+								Read(file, val);
+								dst[dstIdx++] = val;
+							}
+						}
+					}
+					std::vector<uint32_t> result(visNodeSize);
+					std::memcpy(result.data(), dst.data(), dst.size());
+					return result;
+				};
+
 			for (size_t q = 0; q < m_quadblocks.size(); q++)
 			{
 				uint32_t offVisibleSet = quadblocksVisibleSetOff[q];
@@ -1442,18 +1482,30 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 				file.seekg(offLev + static_cast<std::streamoff>(offVisibleSet));
 				Read(file, visSet);
 				if (visSet.offVisibleBSPNodes == 0) { continue; }
-
 				size_t leafID = m_quadblocks[q].GetBSPID() & ~BSPID::LEAF;
 				if (!leafIdToMatrix.contains(leafID)) { continue; }
 				size_t visTreeID = leafIdToMatrix[leafID];
 
-				file.seekg(offLev + static_cast<std::streamoff>(visSet.offVisibleBSPNodes));
-				std::vector<uint32_t> visNodes(visNodeSize);
-				for (size_t i = 0; i < visNodeSize; i++) { Read(file, visNodes[i]); }
+				bool compressed = visSet.offVisibleBSPNodes & 1;
+				uint32_t actualOff = visSet.offVisibleBSPNodes & ~3u;
+				std::streampos srcPos = offLev + static_cast<std::streamoff>(actualOff);
+
+				std::vector<uint32_t> visNodes;
+				if (compressed)
+				{
+					visNodes = decompressVisNodes(srcPos);
+				}
+				else
+				{
+					file.seekg(srcPos);
+					visNodes.resize(visNodeSize);
+					for (size_t i = 0; i < visNodeSize; i++) { Read(file, visNodes[i]); }
+				}
 
 				for (size_t i = 0; i < bspLeaves.size(); i++)
 				{
 					size_t destBspId = bspLeaves[i]->GetId();
+					if (destBspId / 32 >= visNodes.size()) { continue; }
 					uint32_t word = visNodes[destBspId / 32];
 					uint32_t bit = 1u << (31 - (destBspId % 32));
 					if (word & bit) { m_bspVis.Set(true, visTreeID, i); }

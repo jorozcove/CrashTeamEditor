@@ -983,10 +983,14 @@ void Level::RenderUI(Renderer& renderer)
 					ImGui::SetItemTooltip("Minimum drawing distance. Higher values decrease performance and speed up the vis tree generation.");
 					if (ImGui::InputFloat("Far Clip Distance", &m_visTreeSettings.farClipDistance)) { m_visTreeSettings.farClipDistance = std::max(m_visTreeSettings.farClipDistance, 0.0f); }
 					ImGui::SetItemTooltip("Maximum drawing distance. Lower values improve performance and speed up the vis tree generation.");
+					ImGui::Checkbox("Self target Near Clip Distance", &m_visTreeSettings.selfTargetNearClip);
+					ImGui::SetItemTooltip("Spread visibility depending on the distance to ray emmitor instead of ray target");
 					ImGui::Checkbox("Assume Commutative Rays", &m_visTreeSettings.commutativeRays);
 					ImGui::SetItemTooltip("Speeds up VisTree generation by a factor of 2x to 3x with minimal loss of precision.");
 					ImGui::Checkbox("Center-Only Samples", &m_visTreeSettings.centerOnlySamples);
 					ImGui::SetItemTooltip("Only casts rays from each quad center (skips corner samples). Much faster, but may miss narrow visibility paths.");
+					ImGui::Checkbox("Ground-Only RayCast", &m_visTreeSettings.castFromGroundOnly);
+					ImGui::SetItemTooltip("Only casts rays from Ground and Kicker_2 quads. Less visibility, but can avoid unwanted raycast");
 					ImGui::TreePop();
 				}
 				ImGui::TreePop();

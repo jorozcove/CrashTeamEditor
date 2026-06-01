@@ -218,7 +218,7 @@ static std::vector<size_t> GetPotentialQuadblockIndexes(
 	return result;
 }
 
-static std::vector<Vec3> GenerateSamplePointLeaf(const std::vector<Quadblock>& quadblocks, const BSP& leaf, float camera_raise, bool centerOnlySamples)
+static std::vector<Vec3> GenerateSamplePointLeaf(const std::vector<Quadblock>& quadblocks, const BSP& leaf, float camera_raise, bool centerOnlySamples, bool groundOnly)
 {
 	// For a leaf node, generate all the points for the vis ray test.
 	std::vector<Vec3> samples;
@@ -251,8 +251,20 @@ static std::vector<Vec3> GenerateSamplePointLeaf(const std::vector<Quadblock>& q
 	{
 		Quadblock quad = quadblocks[quadID];
 		float up_dist = 0.0f;
+		uint16_t flags = quad.GetFlags();
+		if (groundOnly && 
+				!(
+					(
+						(flags & QuadFlags::GROUND) && 
+						(!(flags & QuadFlags::WALL)) &&
+						(!(flags & QuadFlags::OUT_OF_BOUNDS)) &&
+						(!(flags & QuadFlags::MASK_GRAB)) 
+					) || 
+					(flags & QuadFlags::KICKERS_TWO)
+				)
+			)
+			continue;
 		if (quad.GetFlags() & QuadFlags::GROUND) { up_dist = camera_raise; }
-
 		addIfUnique(quad.GetCenter() + (up * up_dist), false);
 		if (!centerOnlySamples)
 		{
@@ -313,8 +325,8 @@ BitMatrix GenerateVisTree(const std::vector<Quadblock>& quadblocks, const BSP* r
 	std::vector<std::vector<Vec3>> targetSamples(leaves.size());
 	for (size_t i = 0; i < leaves.size(); i++)
 	{
-		sourceSamples[i] = GenerateSamplePointLeaf(quadblocks, *leaves[i], cameraHeight, settings.centerOnlySamples);
-		targetSamples[i] = GenerateSamplePointLeaf(quadblocks, *leaves[i], 0.0f, settings.centerOnlySamples);
+		sourceSamples[i] = GenerateSamplePointLeaf(quadblocks, *leaves[i], cameraHeight, settings.centerOnlySamples, settings.castFromGroundOnly);
+		targetSamples[i] = GenerateSamplePointLeaf(quadblocks, *leaves[i], 0.0f, settings.centerOnlySamples, false);
 	}
 
 	std::vector<std::vector<uint8_t>> visibilityRows(leaves.size(), std::vector<uint8_t>(leaves.size(), 0));
@@ -322,8 +334,7 @@ BitMatrix GenerateVisTree(const std::vector<Quadblock>& quadblocks, const BSP* r
 	for (int leafAInt = 0; leafAInt < leafCount; leafAInt++)
 	{
 		const size_t leafA = static_cast<size_t>(leafAInt);
-		const int leafBStart = settings.commutativeRays ? leafAInt : 0;
-		for (int leafBInt = leafBStart; leafBInt < leafCount; leafBInt++)
+		for (int leafBInt = 0; leafBInt < leafCount; leafBInt++)
 		{
 			const size_t leafB = static_cast<size_t>(leafBInt);
 
@@ -410,6 +421,18 @@ BitMatrix GenerateVisTree(const std::vector<Quadblock>& quadblocks, const BSP* r
 			{
 				visibilityRows[leafA][leafB] = 1;
 				if (settings.commutativeRays) { visibilityRows[leafB][leafA] = 1; }
+				if (!settings.selfTargetNearClip)
+				{
+					for (size_t leafC = 0; leafC < leafCount; leafC++)
+					{
+						// If minDistance is positive, and bigger than distBbox
+						if ((settings.nearClipDistance > -EPSILON) && (settings.nearClipDistance * settings.nearClipDistance >= GetLeafDistanceSquared(*leaves[leafA], *leaves[leafC])))
+						{
+							visibilityRows[leafA][leafC] = 1;
+							if (settings.commutativeRays) { visibilityRows[leafC][leafA] = 1; }
+						}
+					}
+				}
 			}
 		}
 	}
