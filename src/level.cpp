@@ -1439,6 +1439,70 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 	currOffset += (uniqueModelNames.size() + 1) * sizeof(uint32_t);
 	header.offModels = static_cast<uint32_t>(offModelList_ptrArray);
 
+	// Build BSP-leaf instance hitbox lists.
+	// Each BSP leaf whose bbox overlaps an enabled hitbox gets a list of
+	// InstHitbox entries (one per overlapping instance) plus a 4-byte
+	// terminator. The leaf's offHitbox field (already serialized into
+	// serializedBSPs) is patched to point at its list.
+	struct LeafHitboxList
+	{
+		size_t leafFileOffset; // file offset of the BSP leaf node
+		size_t listFileOffset; // file offset of this hitbox list
+		std::vector<PSX::InstHitbox> entries;
+	};
+	std::vector<LeafHitboxList> leafHitboxLists;
+	{
+		std::vector<PSX::InstHitbox> enabledHitboxes;
+		for (size_t i = 0; i < m_modelInstances.size(); i++)
+		{
+			if (i >= m_modelInstanceHitboxes.size() || !m_modelInstanceHitboxes[i].enabled) { continue; }
+			const InstanceHitbox& settings = m_modelInstanceHitboxes[i];
+			const PSX::InstDef& inst = m_modelInstances[i];
+			const int he = settings.halfExtent;
+			const int cx = inst.pos.x;
+			const int cy = inst.pos.y + settings.yOffset;
+			const int cz = inst.pos.z;
+
+			PSX::InstHitbox hitbox = {};
+			hitbox.flags = settings.flags;
+			hitbox.bbox.min = {static_cast<int16_t>(cx - he), static_cast<int16_t>(cy - he), static_cast<int16_t>(cz - he)};
+			hitbox.bbox.max = {static_cast<int16_t>(cx + he), static_cast<int16_t>(cy + he), static_cast<int16_t>(cz + he)};
+			hitbox.center = {static_cast<int16_t>(cx), static_cast<int16_t>(cy), static_cast<int16_t>(cz)};
+			hitbox.halfExtent = static_cast<int16_t>(he);
+			hitbox.halfExtentSq = static_cast<int16_t>(he * he);
+			hitbox.padding = 0;
+			hitbox.offInstDef = static_cast<uint32_t>(instDefOffsets[i]);
+			enabledHitboxes.push_back(hitbox);
+		}
+
+		if (!enabledHitboxes.empty())
+		{
+			size_t nodeFileOffset = offBSP;
+			for (size_t node = 0; node < serializedBSPs.size(); node++)
+			{
+				const size_t currNodeOffset = nodeFileOffset;
+				nodeFileOffset += serializedBSPs[node].size();
+				if (orderedBSPNodes[node]->IsBranch()) { continue; }
+
+				PSX::BSPLeaf* leaf = reinterpret_cast<PSX::BSPLeaf*>(serializedBSPs[node].data());
+				std::vector<PSX::InstHitbox> overlapping;
+				for (const PSX::InstHitbox& hitbox : enabledHitboxes)
+				{
+					if (hitbox.bbox.max.x < leaf->bbox.min.x || leaf->bbox.max.x < hitbox.bbox.min.x ||
+							hitbox.bbox.max.y < leaf->bbox.min.y || leaf->bbox.max.y < hitbox.bbox.min.y ||
+							hitbox.bbox.max.z < leaf->bbox.min.z || leaf->bbox.max.z < hitbox.bbox.min.z) { continue; }
+					overlapping.push_back(hitbox);
+				}
+				if (overlapping.empty()) { continue; }
+
+				leaf->offHitbox = static_cast<uint32_t>(currOffset);
+				printf("offLeafHitboxList[node %zu] = %zx (%zu entries)\n", node, currOffset, overlapping.size());
+				leafHitboxLists.push_back({currNodeOffset, currOffset, std::move(overlapping)});
+				currOffset += leafHitboxLists.back().entries.size() * sizeof(PSX::InstHitbox) + sizeof(uint32_t); // entries + terminator
+			}
+		}
+	}
+
 	size_t paddingSizeForMultOfFour = (4 - (currOffset % 4)) % 4;
 	printf(nameof(paddingSizeForMultOfFour) " = %zx\n", paddingSizeForMultOfFour);
 	currOffset += paddingSizeForMultOfFour;
@@ -1509,6 +1573,17 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 	if (m_skybox.IsReady())
 	{
 		pointerMap.push_back(CALCULATE_OFFSET(PSX::LevHeader, offSkybox, offHeader));
+	}
+
+	// Add BSP-leaf hitbox pointers: each leaf's offHitbox field, plus the
+	// InstDef pointer inside every hitbox entry
+	for (const LeafHitboxList& list : leafHitboxLists)
+	{
+		pointerMap.push_back(CALCULATE_OFFSET(PSX::BSPLeaf, offHitbox, list.leafFileOffset));
+		for (size_t i = 0; i < list.entries.size(); i++)
+		{
+			pointerMap.push_back(CALCULATE_OFFSET(PSX::InstHitbox, offInstDef, list.listFileOffset + (i * sizeof(PSX::InstHitbox))));
+		}
 	}
 
 	if (offTropyGhost != 0) { pointerMap.push_back(CALCULATE_OFFSET(PSX::LevelExtraHeader, offsets[PSX::LevelExtra::N_TROPY_GHOST], offExtraHeader)); }
@@ -1779,6 +1854,13 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 		Write(file, &ptr, sizeof(ptr));
 	}
 	Write(file, &nullTerm, sizeof(nullTerm));
+
+	// Write BSP-leaf instance hitbox lists (each NULL-terminated)
+	for (const LeafHitboxList& list : leafHitboxLists)
+	{
+		Write(file, list.entries.data(), list.entries.size() * sizeof(PSX::InstHitbox));
+		Write(file, &nullTerm, sizeof(nullTerm));
+	}
 
 	// Write skybox data if present
 	if (!skyboxData.empty()) { Write(file, skyboxData.data(), skyboxData.size()); }

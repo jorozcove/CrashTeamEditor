@@ -23,6 +23,7 @@
 #include <fstream>
 #include <sstream>
 #include <cstdint>
+#include <algorithm>
 
 class ButtonUI
 {
@@ -546,6 +547,7 @@ void Level::RenderUI(Renderer& renderer)
 
 				m_modelInstances.push_back(newInst);
 				m_modelInstanceNames.push_back(m_importedModels.begin()->first); // Default to first model
+				m_modelInstanceHitboxes.emplace_back();
 			}
 
 			if (!hasModels)
@@ -558,6 +560,12 @@ void Level::RenderUI(Renderer& renderer)
 			}
 
 			// Show instances
+			// Keep the hitbox parallel array in sync with instances created
+			// before this field existed (e.g. older session state)
+			if (m_modelInstanceHitboxes.size() < m_modelInstances.size())
+			{
+				m_modelInstanceHitboxes.resize(m_modelInstances.size());
+			}
 			int instanceToDelete = -1;
 			for (size_t i = 0; i < m_modelInstances.size(); i++)
 			{
@@ -607,6 +615,45 @@ void Level::RenderUI(Renderer& renderer)
 					ImGui::InputScalar("Unk24", ImGuiDataType_U32, &inst.unk24);
 					ImGui::InputScalar("Unk28", ImGuiDataType_U32, &inst.unk28);
 
+					// BSP collision hitbox settings
+					InstanceHitbox& hitbox = m_modelInstanceHitboxes[i];
+					ImGui::Checkbox("BSP Collision Hitbox", &hitbox.enabled);
+					ImGui::SetItemTooltip("Emit a collision hitbox into every BSP leaf overlapping this instance.\nRequired for the instance to be collidable/triggerable in-game.");
+					if (hitbox.enabled)
+					{
+						static const char* presetNames[] = { "Pickup", "Solid Wall", "Static Decoration", "Custom" };
+						if (ImGui::Combo("Hitbox Type", &hitbox.preset, presetNames, 4))
+						{
+							switch (hitbox.preset)
+							{
+							case InstanceHitbox::PICKUP: hitbox.flags = 0x000004C0; hitbox.halfExtent = 76; break;
+							case InstanceHitbox::SOLID_WALL: hitbox.flags = 0x026500A0; hitbox.halfExtent = 76; break;
+							case InstanceHitbox::STATIC_DECORATION: hitbox.flags = 0x000000C0; hitbox.halfExtent = 76; break;
+							}
+						}
+						ImGui::SetItemTooltip("Pickup: trigger-only, vanilla crate radius.\nSolid Wall: blocks the kart.\nStatic Decoration: small solid collider.\nCustom: edit the raw flags yourself.");
+
+						int halfExtent = hitbox.halfExtent;
+						if (ImGui::InputInt("Half Extent", &halfExtent))
+						{
+							// halfExtent^2 must fit in int16, so cap at 181
+							hitbox.halfExtent = static_cast<int16_t>(std::clamp(halfExtent, 1, 181));
+						}
+						ImGui::SetItemTooltip("Hitbox radius around the instance position (vanilla crates use 76).\nMax 181 since the squared value must fit in 16 bits.");
+
+						int yOffset = hitbox.yOffset;
+						if (ImGui::InputInt("Hitbox Y Offset", &yOffset))
+						{
+							hitbox.yOffset = static_cast<int16_t>(std::clamp(yOffset, -32000, 32000));
+						}
+						ImGui::SetItemTooltip("Raises the hitbox center above the instance position.\nVanilla crates use ~46 so karts overlap at chest height.");
+
+						ImGui::BeginDisabled(hitbox.preset != InstanceHitbox::CUSTOM);
+						ImGui::InputScalar("Hitbox Flags", ImGuiDataType_U32, &hitbox.flags, nullptr, nullptr, "%08X", ImGuiInputTextFlags_CharsHexadecimal);
+						ImGui::EndDisabled();
+						ImGui::SetItemTooltip("Raw hitbox flags (editable with Custom type).\nBit 0x80: set = trigger-only (pass through), clear = solid collision.");
+					}
+
 					// Delete button
 					if (ImGui::Button("Delete Instance"))
 					{
@@ -622,6 +669,7 @@ void Level::RenderUI(Renderer& renderer)
 			{
 				m_modelInstances.erase(m_modelInstances.begin() + instanceToDelete);
 				m_modelInstanceNames.erase(m_modelInstanceNames.begin() + instanceToDelete);
+				m_modelInstanceHitboxes.erase(m_modelInstanceHitboxes.begin() + instanceToDelete);
 			}
 
 			if (m_modelInstances.empty())

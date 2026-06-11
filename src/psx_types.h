@@ -251,6 +251,23 @@ namespace PSX
 		// 0x40 -- struct size
 	};
 
+	// BSP-leaf instance hitbox entry (BSPLeaf::offHitbox points to a list of
+	// these, terminated by an entry whose flags == 0). Walked at runtime by
+	// COLL_FIXED_BSPLEAF_TestInstance: AABB broad-phase against the kart's
+	// bbox, then sphere test using center/halfExtentSq.
+	// Bit 0x80 of flags: set = trigger-only (pickups), clear = solid collision.
+	struct InstHitbox
+	{
+		uint32_t flags; // 0x0
+		PSX::BoundingBox bbox; // 0x4
+		PSX::Vec3 center; // 0x10
+		int16_t halfExtent; // 0x16
+		int16_t halfExtentSq; // 0x18
+		int16_t padding; // 0x1A
+		uint32_t offInstDef; // 0x1C
+		// 0x20 -- struct size
+	};
+
 	struct Model
 	{
 		// name of model group
