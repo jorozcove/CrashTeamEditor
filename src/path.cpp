@@ -274,6 +274,71 @@ std::vector<Checkpoint> Path::GeneratePath(size_t pathStartIndex, std::vector<Qu
 	int currCheckpointIndex = static_cast<int>(pathStartIndex);
 	for (const std::vector<size_t>& quadIndexSet : quadIndexesPerChunk)
 	{
+
+		// For the checkpoint 0, we instead look at shared vertices between path0 start and path0 ignored.
+		// This way, we can put the node 0 on the seam between both areas, limiting potential NMZ cuts, and Yoshi Circuit Lap style cut.
+		if (currCheckpointIndex == 0)
+		{
+			std::vector<Vec3> sharedVert;
+			for (size_t quadStartID : m_quadIndexesStart)
+			{
+				Quadblock& quadStart = quadblocks[quadStartID];
+				for (Vertex& v1 : quadStart.GetVertices())
+				{
+					for (size_t quadIgnoreID : m_quadIndexesIgnore)
+					{
+						Quadblock& quadIgnore = quadblocks[quadIgnoreID];
+						for (Vertex& v2 : quadIgnore.GetVertices())
+						{
+							constexpr float thresholdSquared = 0.01f;
+							if ((v1.m_pos - v2.m_pos).LengthSquared() < thresholdSquared)
+								sharedVert.emplace_back(v1.m_pos);
+						}
+					}
+				}
+			}
+
+			if (!sharedVert.empty())
+			{
+				BoundingBox bbox;
+				bbox.min = Vec3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+				bbox.max = Vec3(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
+				for (Vec3& v : sharedVert)
+				{
+					bbox.min.x = std::min(bbox.min.x, v.x); bbox.max.x = std::max(bbox.max.x, v.x);
+					bbox.min.y = std::min(bbox.min.y, v.y); bbox.max.y = std::max(bbox.max.y, v.y);
+					bbox.min.z = std::min(bbox.min.z, v.z); bbox.max.z = std::max(bbox.max.z, v.z);
+				}
+				Vec3 chunkCenter = bbox.Midpoint();
+				Vec3 chunkVertex;
+				float closestDist = std::numeric_limits<float>::max();
+				for (Vec3& curVert : sharedVert)
+				{
+					if ((chunkCenter - curVert).LengthSquared() < closestDist)
+					{
+						closestDist = (chunkCenter - curVert).LengthSquared();
+						chunkVertex = curVert;
+					}
+				}
+				for (const size_t index : quadIndexSet)
+				{
+					Quadblock& quadblock = quadblocks[index];
+					quadblock.SetCheckpoint(currCheckpointIndex);
+				}
+				if (!checkpoints.empty()) { distStart += (lastChunkVertex - chunkVertex).Length(); }
+				distStarts.push_back(distStart);
+				checkpoints.emplace_back(currCheckpointIndex, chunkVertex, ""); 
+				checkpoints.back().SetColor(m_color);
+				checkpoints.back().UpdateUp(currCheckpointIndex + 1);
+				checkpoints.back().UpdateDown(currCheckpointIndex - 1);
+				currCheckpointIndex++;
+				lastChunkVertex = chunkVertex;
+
+				continue;
+			}
+		}
+
+
 		BoundingBox bbox;
 		bbox.min = Vec3(std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
 		bbox.max = Vec3(-std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(), -std::numeric_limits<float>::max());
