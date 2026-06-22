@@ -86,6 +86,7 @@ void Level::Clear(bool clearErrors)
 	m_skybox.Clear();
 	m_splitLines[0] = 0.0;
 	m_splitLines[1] = 0.0;
+	m_jumpYSpeedCap = 0;
 	for (int i = 0; i < 3; i++)
 	{
 		m_botPaths[i].Clear();
@@ -708,6 +709,7 @@ bool Level::LoadPreset(const std::filesystem::path& filename)
 	else if (header == PresetHeader::LEVEL)
 	{
 		if (json.contains("configFlags")) { m_configFlags = json["configFlags"]; }
+		if (json.contains("jumpYSpeedCap")) { m_jumpYSpeedCap = json["jumpYSpeedCap"]; }
 		if (json.contains("skyGradient")) { m_skyGradient = json["skyGradient"]; }
 		if (json.contains("clearColor")) { m_clearColor = json["clearColor"]; }
 		if (json.contains("stars")) { json["stars"].get_to(m_stars); }
@@ -878,6 +880,7 @@ bool Level::SavePreset(const std::filesystem::path& path)
 	levelJson["skyGradient"] = m_skyGradient;
 	levelJson["clearColor"] = m_clearColor;
 	levelJson["stars"] = m_stars;
+	levelJson["jumpYSpeedCap"] = m_jumpYSpeedCap;
 	levelJson["splitLines"] = { m_splitLines[0], m_splitLines[1] };
 	if (!m_skybox.m_objPath.empty()) { levelJson["skyboxObjPath"] = m_skybox.m_objPath.string(); }
 	SaveJSON(dirPath / "level.json", levelJson);
@@ -1056,6 +1059,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	m_configFlags = header.config;
 	m_clearColor = ConvertColor(header.clear);
 	m_stars = ConvertStars(header.stars);
+	m_jumpYSpeedCap = static_cast<int>(header.jumpYSpeedCap);
 	m_splitLines[0] = ConvertFP(header.splitLines[0], FP_ONE_GEO);
 	m_splitLines[1] = ConvertFP(header.splitLines[1], FP_ONE_GEO);
 	for (size_t i = 0; i < m_spawn.size(); i++)
@@ -2251,6 +2255,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 		header.skyGradient[i].colorTo = ConvertColor(m_skyGradient[i].colorTo);
 	}
 	header.stars = ConvertStars(m_stars);
+	header.jumpYSpeedCap = static_cast<uint32_t>(m_jumpYSpeedCap);
 	header.splitLines[0] = ConvertFloat(m_splitLines[0], FP_ONE_GEO);
 	header.splitLines[1] = ConvertFloat(m_splitLines[1], FP_ONE_GEO);
 	header.offExtra = static_cast<uint32_t>(offExtraHeader);
@@ -2258,7 +2263,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	header.offCheckpointNodes = static_cast<uint32_t>(offCheckpoints);
 	header.offVisMem = static_cast<uint32_t>(offVisMem);
 	header.offLevNavTable = static_cast<uint32_t>(offNavTable);
-
+	
 	// Set skybox pointer in header if enabled
 	if (m_skybox.IsReady())
 	{

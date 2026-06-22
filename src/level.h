@@ -137,6 +137,7 @@ private:
 	Color m_clearColor;
 	Stars m_stars;
 	float m_splitLines[2];
+	int m_jumpYSpeedCap;
 	std::vector<uint8_t> m_tropyGhost;
 	std::vector<uint8_t> m_oxideGhost;
 	std::vector<Quadblock> m_quadblocks;

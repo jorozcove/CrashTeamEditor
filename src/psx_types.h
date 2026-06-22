@@ -202,7 +202,7 @@ namespace PSX
 		Stars stars; // 0x17C
 		int16_t splitLines[2]; // 0x184
 		uint32_t offLevNavTable; // 0x188
-		uint32_t unk_0x18C; // 0x18C
+		uint32_t jumpYSpeedCap; // 0x18C // JUMP Y SPEED CAP
 		uint32_t offVisMem; // 0x190
 		uint8_t footer[0x60]; // 0x194
 	};
