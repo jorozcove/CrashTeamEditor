@@ -48,7 +48,7 @@ void Level::OpenModelExtractorWindow()
 
 void Level::OpenModelImporterWindow()
 {
-	Windows::w_modelImporter = true;
+	Settings::w_modelImporter = true;
 }
 
 void Level::Clear(bool clearErrors)
@@ -56,7 +56,7 @@ void Level::Clear(bool clearErrors)
 	m_loaded = false;
 	m_showHotReloadWindow = false;
 	m_showModelExtractorWindow = false;
-	Windows::w_modelImporter = false;
+	Settings::w_modelImporter = false;
 	m_showExtractorLogWindow = false;
 	for (size_t i = 0; i < NUM_DRIVERS; i++) { m_spawn[i] = Spawn(); }
 	for (size_t i = 0; i < NUM_GRADIENT; i++) { m_skyGradient[i] = ColorGradient(); }
@@ -1338,8 +1338,6 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 		currOffset += skyboxData.size();
 	}
 
-	const size_t offPointerMap = currOffset;
-
 	header.offMeshInfo = static_cast<uint32_t>(offMeshInfo);
 	header.offAnimTex = static_cast<uint32_t>(offAnimData);
 	for (size_t i = 0; i < NUM_DRIVERS; i++)
@@ -1374,11 +1372,6 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 	{
 		uniqueModelNames.insert(modelName);
 	}
-
-	PSX::InstDef cactus = {};
-	const size_t offCactus = currOffset;
-	printf(nameof(offCactus) " = %zx\n", offCactus);
-  currOffset += sizeof(cactus);
 
 	header.numInstances = static_cast<uint32_t>(m_modelInstances.size());
 	header.numModels = static_cast<uint32_t>(uniqueModelNames.size());
@@ -1670,6 +1663,13 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 	Write(file, visMemBSPP1.data(), visMemBSPP1.size() * sizeof(uint32_t));
 	Write(file, &visMem, sizeof(visMem));
 
+	// Write skybox data immediately after visMem, matching the offset accounting
+	// above (offSkyboxData = currOffset right after sizeof(visMem)). The rebase onto
+	// the skybox-enabled main left this write at the end of the file while the
+	// accounting kept it here, corrupting header.offSkybox and every instance/model
+	// /hitbox offset that follows.
+	if (!skyboxData.empty()) { Write(file, skyboxData.data(), skyboxData.size()); }
+
 	// Write InstDefs
 	for (size_t i = 0; i < m_modelInstances.size(); i++)
 	{
@@ -1862,21 +1862,6 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 		Write(file, &nullTerm, sizeof(nullTerm));
 	}
 
-	// Write skybox data if present
-	if (!skyboxData.empty()) { Write(file, skyboxData.data(), skyboxData.size()); }
-  Write(file, &cactus, sizeof(cactus));
-	Write(file, &instDefList_ptrArray[0], sizeof(instDefList_ptrArray));
-	Write(file, &instDefList2_ptrArray[0], sizeof(instDefList2_ptrArray));
-	Write(file, &cactusModel, sizeof(cactusModel));
-	Write(file, &modelList_ptrArray[0], sizeof(modelList_ptrArray));
-  Write(file, &cactusModelHeader, sizeof(cactusModelHeader));
-	Write(file, &commandList, sizeof(commandList));
-  Write(file, &cactusModelFrame, sizeof(cactusModelFrame));
-	Write(file, &cactusVertexData[0], sizeof(cactusVertexData));
-  Write(file, &cactusTextureLayouts[0], sizeof(cactusTextureLayouts));
-	Write(file, &cactusTextureLayout_ptrArray[0], sizeof(cactusTextureLayout_ptrArray));
-  Write(file, &cactusColorsCLUTData, sizeof(cactusColorsCLUTData));
-	//Write(file, &bunchOfFs[0], sizeof(bunchOfFs));
 	uint32_t fourBytesOfZero = 0;
 	if (paddingSizeForMultOfFour > 0)
 	{
