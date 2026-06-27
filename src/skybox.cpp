@@ -10,6 +10,7 @@
 #include <cstring>
 #include <cmath>
 #include <cstdio>
+#include <array>
 
 bool Skybox::LoadOBJ(const std::filesystem::path& path)
 {
@@ -91,6 +92,66 @@ bool Skybox::LoadOBJ(const std::filesystem::path& path)
 	return true;
 }
 
+
+bool Skybox::LoadFromPSX(const PSX::Skybox& psxHeader, const std::vector<PSX::SkyboxVertex>& psxVerts, const std::vector<std::vector<uint16_t>>& segmentIndices,
+	const std::filesystem::path& objPath)
+{
+	if (psxVerts.empty()) { return false; }
+
+	std::ostringstream oss;
+	// Vertices with vertex colors: "v x y z r g b"
+	for (const PSX::SkyboxVertex& sv : psxVerts)
+	{
+		float x = ConvertFP(sv.pos.x, FP_ONE_GEO);
+		float y = ConvertFP(sv.pos.y, FP_ONE_GEO);
+		float z = ConvertFP(sv.pos.z, FP_ONE_GEO);
+		float r = ConvertFP(sv.color.r, 255);
+		float g = ConvertFP(sv.color.g, 255);
+		float b = ConvertFP(sv.color.b, 255);
+		oss << "v " << x << " " << y << " " << z
+			<< " " << r << " " << g << " " << b << "\n";
+	}
+	oss << "\n";
+
+	// Collect all unique faces across all segments
+	std::vector<std::array<uint16_t, 3>> uniqueFaces;
+	std::set<std::array<uint16_t, 3>> seenFaces;
+
+	for (const auto& seg : segmentIndices)
+	{
+		const size_t faceCount = seg.size() / PSX::SKYBOX_FACE_STRIDE;
+		for (size_t i = 0; i < faceCount; i++)
+		{
+			const size_t base = i * PSX::SKYBOX_FACE_STRIDE;
+			std::array<uint16_t, 3> face = {
+				seg[base + 0],
+				seg[base + 1],
+				seg[base + 2]
+				// [base + 3] is padding, ignored
+			};
+			if (seenFaces.insert(face).second)  // true if newly inserted
+			{
+				uniqueFaces.push_back(face);
+			}
+		}
+	}
+
+	for (const auto& face : uniqueFaces)
+	{
+		const int idxA = static_cast<int>(face[0] / sizeof(PSX::SkyboxVertex)) + 1;
+		const int idxB = static_cast<int>(face[1] / sizeof(PSX::SkyboxVertex)) + 1;
+		const int idxC = static_cast<int>(face[2] / sizeof(PSX::SkyboxVertex)) + 1;
+		oss << "f " << idxA << " " << idxB << " " << idxC << "\n";
+	}
+
+	std::ofstream objFile(objPath);
+	if (!objFile.is_open()) { return false; }
+	objFile << oss.str();
+	objFile.close();
+
+	return LoadOBJ(objPath);
+}
+
 void Skybox::DistributeFaces(std::vector<std::vector<uint16_t>>& segments) const
 {
 	segments.clear();
@@ -104,20 +165,6 @@ void Skybox::DistributeFaces(std::vector<std::vector<uint16_t>>& segments) const
 	{
 		segments[seg] = m_indexBuffer;
 	}
-
-	// Distribute faces evenly across segments (this is not perfect)
-	// size_t facesPerSegment = faces.size() / PSX::NUM_SKYBOX_SEGMENTS;
-	// size_t remainder = faces.size() % PSX::NUM_SKYBOX_SEGMENTS;
-	// size_t faceIndex = 0;
-
-	// for (size_t seg = 0; seg < PSX::NUM_SKYBOX_SEGMENTS; seg++)
-	// {
-	// 	size_t count = facesPerSegment + (seg < remainder ? 1 : 0);
-	// 	for (size_t i = 0; i < count && faceIndex < faces.size(); i++, faceIndex++)
-	// 	{
-	// 		segments[seg].push_back(faces[faceIndex]);
-	// 	}
-	// }
 }
 
 std::vector<uint8_t> Skybox::Serialize(size_t baseOffset, std::vector<size_t>& ptrMapOffsets) const

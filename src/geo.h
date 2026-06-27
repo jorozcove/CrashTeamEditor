@@ -12,7 +12,11 @@ static constexpr float EPSILON = 0.000001f;
 struct Color
 {
  	Color() : r(0u), g(0u), b(0u), a(255u) {};
- 	Color(float r, float g, float b) : r(static_cast<unsigned char>(Clamp(r * 255.0f, 0.0f, 255.0f))), g(static_cast<unsigned char>(Clamp(g * 255.0f, 0.0f, 255.0f))), b(static_cast<unsigned char>(Clamp(b * 255.0f, 0.0f, 255.0f))), a(255u) {};
+	Color(float r, float g, float b)
+		: r(static_cast<unsigned char>(Clamp(std::round(r * 255.0f), 0.0f, 255.0f))),
+		g(static_cast<unsigned char>(Clamp(std::round(g * 255.0f), 0.0f, 255.0f))),
+		b(static_cast<unsigned char>(Clamp(std::round(b * 255.0f), 0.0f, 255.0f))),
+		a(255u) {};
  	Color(float r, float g, float b, float a) : r(static_cast<unsigned char>(Clamp(r * 255.0f, 0.0f, 255.0f))), g(static_cast<unsigned char>(Clamp(g * 255.0f, 0.0f, 255.0f))), b(static_cast<unsigned char>(Clamp(b * 255.0f, 0.0f, 255.0f))), a(static_cast<unsigned char>(Clamp(a * 255.0f, 0.0f, 255.0f))) {};
 	Color(unsigned char r, unsigned char g, unsigned char b) : r(r), g(g), b(b), a(255u) {};
 	Color(unsigned char r, unsigned char g, unsigned char b, unsigned char a) : r(r), g(g), b(b), a(a) {};
@@ -67,10 +71,11 @@ struct Vec3
 	inline float* Data() { return &x; }
 	inline const float* Data() const { return &x; }
 	inline float Length() const { return static_cast<float>(std::sqrt((x * x) + (y * y) + (z * z))); }
+	inline float LengthHorizontal() const { return static_cast<float>(std::sqrt((x * x) + (z * z))); }
 	inline float LengthSquared() const { return (x * x) + (y * y) + (z * z); }
 	inline Vec3 Cross(const Vec3& v) const { return { y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - v.x * y }; }
 	inline float Dot(const Vec3& v) const { return x * v.x + y * v.y + z * v.z; }
-	inline void Normalize() { const float len = Length(); x /= len; y /= len; z /= len; }
+	inline void Normalize() { const float len = Length(); if (len > EPSILON) { x /= len; y /= len; z /= len; } }
 
 	inline Vec3 operator+(const Vec3& v) const { return { x + v.x, y + v.y, z + v.z }; }
 	inline Vec3 operator-(const Vec3& v) const { return { x - v.x, y - v.y, z - v.z }; }

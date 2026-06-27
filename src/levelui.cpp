@@ -183,6 +183,141 @@ void Checkpoint::RenderUI(size_t numCheckpoints, const std::vector<Quadblock>& q
 	}
 }
 
+void BotNode::RenderUI(int index, bool& deleteRequested)
+{
+	const std::string nodeLabel = "Node " + std::to_string(index);
+	if (ImGui::TreeNode(nodeLabel.c_str()))
+	{
+		// Position
+		float pos[3] = { m_pos.x, m_pos.y, m_pos.z };
+		if (ImGui::DragFloat3("Position", pos, 1.0f))
+		{
+			m_pos.x = pos[0];
+			m_pos.y = pos[1];
+			m_pos.z = pos[2];
+		}
+
+		// Rotation
+		ImGui::DragFloat("Yaw", &m_yaw, 0.5f, -180.0f, 180.0f, "%.1f deg");
+		ImGui::DragFloat("Pitch", &m_pitch, 0.5f, -180.0f, 180.0f, "%.1f deg");
+		ImGui::DragFloat("Roll", &m_roll, 0.5f, -180.0f, 180.0f, "%.1f deg");
+
+		// Flags — one checkbox per named flag bit
+		ImGui::SeparatorText("Flags");
+		auto FlagCheckbox = [&](const char* label, uint16_t bit)
+			{
+				bool v = (m_flags & bit) != 0;
+				if (ImGui::Checkbox(label, &v))
+					m_flags = v ? (m_flags | bit) : (m_flags & ~bit);
+			};
+		FlagCheckbox("Turbo Pad (High)", BotNodeFlags::TURBO_PAD_HIGH);
+		FlagCheckbox("Skidmarks Front", BotNodeFlags::SKIDMARKS_FRONT);
+		FlagCheckbox("Skidmarks Back", BotNodeFlags::SKIDMARKS_BACK);
+		FlagCheckbox("Turbo Pad (Low)", BotNodeFlags::TURBO_PAD_LOW);
+		FlagCheckbox("Mask Grab STP", BotNodeFlags::MASK_GRAB_STP);
+		FlagCheckbox("Jump", BotNodeFlags::JUMP);
+		FlagCheckbox("Drift Left", BotNodeFlags::DRIFT_LEFT);
+		FlagCheckbox("Drift Right", BotNodeFlags::DRIFT_RIGHT);
+		FlagCheckbox("Engine Echo", BotNodeFlags::ENGINE_ECHO);
+		FlagCheckbox("Mid Air", BotNodeFlags::MID_AIR);
+		FlagCheckbox("Sink Kart", BotNodeFlags::SINK_KART);
+
+		// Terrain dropdown — built from TerrainType::LABELS, sorted by value
+		ImGui::SeparatorText("Terrain");
+		// Build a sorted list once, reuse across frames
+		static std::vector<std::pair<std::string, uint8_t>> terrainList;
+		if (terrainList.empty())
+		{
+			for (const auto& [name, val] : TerrainType::LABELS)
+				terrainList.emplace_back(name, val);
+			std::sort(terrainList.begin(), terrainList.end(),
+				[](const auto& a, const auto& b) { return a.second < b.second; });
+		}
+		// Find current terrain label
+		std::string currentLabel = "Unknown";
+		for (const auto& [name, val] : terrainList)
+			if (val == m_terrain) { currentLabel = name; break; }
+
+		if (ImGui::BeginCombo("Terrain Type", currentLabel.c_str()))
+		{
+			for (const auto& [name, val] : terrainList)
+			{
+				bool selected = (val == m_terrain);
+				if (ImGui::Selectable(name.c_str(), selected))
+					m_terrain = val;
+				if (selected)
+					ImGui::SetItemDefaultFocus();
+			}
+			ImGui::EndCombo();
+		}
+
+		// Path change
+		ImGui::SeparatorText("Path Change");
+		ImGui::InputInt("Path Change OpCode", &m_pathChange);
+		ImGui::InputInt("Path Change Index", &m_pathChangeIndex);
+
+		// Misc
+		ImGui::SeparatorText("Misc");
+		int goBack = static_cast<int>(m_goBackCount);
+		if (ImGui::InputInt("Go Back Count", &goBack))
+			m_goBackCount = static_cast<uint8_t>(std::clamp(goBack, 0, 255));
+		int special = static_cast<int>(m_specialBits);
+		if (ImGui::InputInt("Special Bits", &special))
+			m_specialBits = static_cast<uint8_t>(std::clamp(special, 0, 255));
+
+		// Delete button at the bottom of each node
+		ImGui::Spacing();
+		ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.1f, 0.1f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+		ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+		if (ImGui::Button(("Delete Node##" + std::to_string(index)).c_str()))
+			deleteRequested = true;
+		ImGui::PopStyleColor(3);
+
+		ImGui::TreePop();
+	}
+}
+
+void BotPath::RenderUI(int pathIndex)
+{
+	const std::string pathLabel = "Nodes";
+	if (ImGui::TreeNode(pathLabel.c_str()))
+	{
+		ImGui::Text("Nodes: %zu", m_nodes.size());
+
+		std::vector<int> toDelete;
+		for (int i = 0; i < static_cast<int>(m_nodes.size()); i++)
+		{
+			bool deleteRequested = false;
+			// Push id to avoid TreeNode label collisions across paths
+			ImGui::PushID(i);
+			m_nodes[i].RenderUI(i, deleteRequested);
+			ImGui::PopID();
+			if (deleteRequested)
+				toDelete.push_back(i);
+		}
+
+		// Process deletions in reverse to preserve indices
+		if (!toDelete.empty())
+		{
+			for (int i = static_cast<int>(toDelete.size()) - 1; i >= 0; i--)
+				m_nodes.erase(m_nodes.begin() + toDelete[i]);
+		}
+
+		if (ImGui::Button(("Add Node##path" + std::to_string(pathIndex)).c_str()))
+		{
+			// Default-construct a new node; position it at the last node's
+			// position if available so it doesn't spawn at the world origin
+			BotNode newNode;
+			if (!m_nodes.empty())
+				newNode.SetPos(m_nodes.back().GetPos());
+			m_nodes.push_back(newNode);
+		}
+
+		ImGui::TreePop();
+	}
+}
+
 template<typename T, MaterialType M>
 bool MaterialProperty<T, M>::RenderUI(const std::string& material, const std::vector<size_t>& quadblockIndexes, std::vector<Quadblock>& quadblocks)
 {
@@ -235,18 +370,27 @@ bool MaterialProperty<T, M>::RenderUI(const std::string& material, const std::ve
 	}
 	else if constexpr (M == MaterialType::DRAW_FLAGS)
 	{
-		if (ImGui::TreeNode("Draw Flags"))
+		T& preview = GetPreview(material);
+		ImGui::Checkbox("Double Sided", &preview);
+		ImGui::SameLine();
+		static ButtonUI drawFlagsApplyButton = ButtonUI();
+		if (drawFlagsApplyButton.Show(("Apply##drawflags" + material).c_str(), "Draw flags successfully updated.", UnsavedChanges(material)))
 		{
-			T& preview = GetPreview(material);
-			ImGui::Checkbox("Double Sided", &preview);
-
-			static ButtonUI drawFlagsApplyButton = ButtonUI();
-			if (drawFlagsApplyButton.Show(("Apply##drawflags" + material).c_str(), "Draw flags successfully updated.", UnsavedChanges(material)))
-			{
-				Apply(material, quadblockIndexes, quadblocks);
-				return true;
-			}
-			ImGui::TreePop();
+			Apply(material, quadblockIndexes, quadblocks);
+			return true;
+		}
+	}
+	else if constexpr (M == MaterialType::DRAW_ORDER_HIGH)
+	{
+		T& preview = GetPreview(material);
+		ImGui::Text("Z depth bias:"); ImGui::SameLine();
+		if (ImGui::InputInt("##draworderHigh", &preview)) { preview = Clamp(preview, static_cast<int>(INT8_MIN), static_cast<int>(INT8_MAX)); }
+		ImGui::SameLine();
+		static ButtonUI drawOrderHighButton = ButtonUI();
+		if (drawOrderHighButton.Show(("Apply##draworderHigh" + material).c_str(), "Draw Order High successfully updated.", UnsavedChanges(material)))
+		{
+			Apply(material, quadblockIndexes, quadblocks);
+			return true;
 		}
 	}
 	else if constexpr (M == MaterialType::CHECKPOINT)
@@ -695,6 +839,7 @@ void Level::RenderUI(Renderer& renderer)
 		if (ImGui::MenuItem("Ghosts")) { Settings::w_ghost = !Settings::w_ghost; }
 		if (ImGui::MenuItem("Python")) { Settings::w_python = !Settings::w_python; }
 		if (ImGui::MenuItem("Model Importer")) { Settings::w_modelImporter = !Settings::w_modelImporter; }
+		if (ImGui::MenuItem("Bot")) { Settings::w_bot = !Settings::w_bot; }
 		ImGui::EndMainMenuBar();
 	}
 
@@ -702,6 +847,23 @@ void Level::RenderUI(Renderer& renderer)
 	{
 		if (ImGui::Begin("Spawn", &Settings::w_spawn))
 		{
+			static std::string spawnButtonMessage;
+			static ButtonUI generateSpawnButton = ButtonUI();
+			static float spawnRowSpacing = 5.0f;
+			static float spawnColSpacing = 5.0f;
+
+			ImGui::SetNextItemWidth(200.0f);
+			ImGui::DragFloat("Row Spacing##spawnRowSpace", &spawnRowSpacing, 0.1f, 0.1f, 30.0f, "%.1f");
+			ImGui::SetNextItemWidth(200.0f);
+			ImGui::DragFloat("Column Spacing##spawnColSpace", &spawnColSpacing, 0.1f, 0.1f, 30.0f, "%.1f");
+
+			if (generateSpawnButton.Show("Generate from checkpoint", spawnButtonMessage, false))
+			{
+				if (GenerateSpawn(spawnColSpacing, spawnRowSpacing)) { spawnButtonMessage = "Successfully generated the spawn positions."; }
+				else { spawnButtonMessage = "Failed generating the spawn position."; }
+				GenerateRenderStartpointData();
+			}
+
 			for (size_t i = 0; i < NUM_DRIVERS; i++)
 			{
 				if (ImGui::TreeNode(("Driver " + std::to_string(i)).c_str()))
@@ -792,6 +954,41 @@ void Level::RenderUI(Renderer& renderer)
 				ImGui::TreePop();
 			}
 
+			if (ImGui::TreeNode("Jump vertical Speed Cap"))
+			{
+				ImGui::Text("Jump Vertical Speed Cap");
+				ImGui::SameLine();
+				if (ImGui::InputInt("##jysc", &m_jumpYSpeedCap)) 
+					m_jumpYSpeedCap = Clamp(m_jumpYSpeedCap, 0, 80);
+				ImGui::SetItemTooltip("Set the maximum vertical speed you can have from jumping\n");
+				ImGui::TreePop();
+			}
+
+			if (ImGui::TreeNode("SplitLines"))
+			{
+				ImGui::Text("SplitLine 1:"); 
+				ImGui::SameLine(); 
+				ImGui::InputFloat("##sl1", &m_splitLines[0]);
+				ImGui::SetItemTooltip("Reflection 1 flag\n");
+				ImGui::SameLine();
+				if (ImGui::Button(("Set from selection##1")))
+				{
+					m_splitLines[0] = m_rendererQueryPoint.y;
+				}
+
+				ImGui::Text("SplitLine 2:");
+				ImGui::SameLine();
+				ImGui::InputFloat("##sl2", &m_splitLines[1]);
+				ImGui::SetItemTooltip("Reflection 2 flag\n");
+				ImGui::SameLine();
+				if (ImGui::Button(("Set from selection##2")))
+				{
+					m_splitLines[1] = m_rendererQueryPoint.y;
+				}
+
+				ImGui::TreePop();
+			}
+
 			if (ImGui::TreeNode("Skybox"))
 			{
 				if (m_skybox.RenderUI())
@@ -826,7 +1023,13 @@ void Level::RenderUI(Renderer& renderer)
 
 					m_propTerrain.RenderUI(material, quadblockIndexes, m_quadblocks);
 					m_propQuadFlags.RenderUI(material, quadblockIndexes, m_quadblocks);
-					m_propDoubleSided.RenderUI(material, quadblockIndexes, m_quadblocks);
+					if (ImGui::TreeNode("Draw Flags"))
+					{
+						m_propDoubleSided.RenderUI(material, quadblockIndexes, m_quadblocks);
+						m_propDrawOrderHigh.RenderUI(material, quadblockIndexes, m_quadblocks);
+						ImGui::TreePop();
+					}
+					
 					m_propCheckpoints.RenderUI(material, quadblockIndexes, m_quadblocks);
 					m_propCheckpointPathable.RenderUI(material, quadblockIndexes, m_quadblocks);
 					m_propVisTreeTransparent.RenderUI(material, quadblockIndexes, m_quadblocks);
@@ -1001,10 +1204,12 @@ void Level::RenderUI(Renderer& renderer)
 				m_checkpointPaths.push_back(Path(m_checkpointPaths.size()));
 			}
 			ImGui::SameLine();
+			ImGui::BeginDisabled(m_checkpointPaths.empty());
 			if (ImGui::Button("Delete Path"))
 			{
 				m_checkpointPaths.pop_back();
 			}
+			ImGui::EndDisabled();
 
 			bool ready = !m_checkpointPaths.empty();
 			for (const Path& path : m_checkpointPaths)
@@ -1013,9 +1218,23 @@ void Level::RenderUI(Renderer& renderer)
 			}
 			ImGui::BeginDisabled(!ready);
 			static ButtonUI generateButton;
+			static bool showWarning = false;
+			static std::chrono::time_point<std::chrono::steady_clock> warningStart;
 			if (generateButton.Show("Generate", "Checkpoints successfully generated.", false))
 			{
-				GenerateCheckpoints();
+				if (!GenerateCheckpoints())
+				{
+					showWarning = true;
+					warningStart = std::chrono::steady_clock::now();
+				}
+			}
+			if (showWarning)
+			{
+				auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - warningStart).count();
+				if (elapsed < 5) 
+					ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Warning: some paths are overlapping.\nCheck console for details.");
+				else
+					showWarning = false;
 			}
 			ImGui::EndDisabled();
 			ImGui::TreePop();
@@ -1033,27 +1252,47 @@ void Level::RenderUI(Renderer& renderer)
 
 			static std::string buttonMessage;
 			static ButtonUI generateBSPButton = ButtonUI();
+			static ButtonUI generateVisTreeButton = ButtonUI();
 			if (ImGui::TreeNode("Advanced"))
 			{
-				if (ImGui::InputInt("Max Quad Per Leaf", &m_maxQuadPerLeaf)) { m_maxQuadPerLeaf = std::max(m_maxQuadPerLeaf, 1); }
-				ImGui::SetItemTooltip("Lower values improve rendering performance, but increases file size and slows down vis tree generation.");
-				if (ImGui::InputFloat("Max Leaf Axis Length", &m_maxLeafAxisLength)) { m_maxLeafAxisLength = std::max(m_maxLeafAxisLength, 0.0f); }
-				ImGui::SetItemTooltip("Lower values improve rendering performance, but increases file size and slows down vis tree generation.");
-				if (ImGui::InputFloat("Near Clip Distance", &m_distanceNearClip)) { m_distanceNearClip = std::max(m_distanceNearClip, -1.0f); }
-				ImGui::SetItemTooltip("Minimum drawing distance. Higher values decrease performance and speed up the vis tree generation.");
-				if (ImGui::InputFloat("Far Clip Distance", &m_distanceFarClip)) { m_distanceFarClip = std::max(m_distanceFarClip, 0.0f); }
-				ImGui::SetItemTooltip("Maximum drawing distance. Lower values improve performance and speed up the vis tree generation.");
-				ImGui::Checkbox("Simple Vis Tree", &m_simpleVisTree);
-				ImGui::SetItemTooltip("The vis tree will be generated faster, but will be less precise");
-				ImGui::Checkbox("Generate Vis Tree", &m_genVisTree);
-				ImGui::SetItemTooltip("Generating the vis tree may take several minutes, but the gameplay will be more performant.");
+				if (ImGui::TreeNodeEx("BSP Settings", ImGuiTreeNodeFlags_DefaultOpen))
+				{
+					if (ImGui::InputInt("Max Quad Per Leaf", &m_maxQuadPerLeaf)) { m_maxQuadPerLeaf = std::max(m_maxQuadPerLeaf, 1); }
+					ImGui::SetItemTooltip("Lower values improve rendering performance, but increases file size and slows down vis tree generation.");
+					if (ImGui::InputFloat("Max Leaf Axis Length", &m_maxLeafAxisLength)) { m_maxLeafAxisLength = std::max(m_maxLeafAxisLength, 0.0f); }
+					ImGui::SetItemTooltip("Lower values improve rendering performance, but increases file size and slows down vis tree generation.");
+
+					ImGui::TreePop();
+				}
+				if (ImGui::TreeNodeEx("Vis Tree Settings", ImGuiTreeNodeFlags_DefaultOpen))
+				{
+					if (ImGui::InputFloat("Near Clip Distance", &m_visTreeSettings.nearClipDistance)) { m_visTreeSettings.nearClipDistance = std::max(m_visTreeSettings.nearClipDistance, -1.0f); }
+					ImGui::SetItemTooltip("Minimum drawing distance. Higher values decrease performance and speed up the vis tree generation.");
+					if (ImGui::InputFloat("Far Clip Distance", &m_visTreeSettings.farClipDistance)) { m_visTreeSettings.farClipDistance = std::max(m_visTreeSettings.farClipDistance, 0.0f); }
+					ImGui::SetItemTooltip("Maximum drawing distance. Lower values improve performance and speed up the vis tree generation.");
+					ImGui::Checkbox("Self target Near Clip Distance", &m_visTreeSettings.selfTargetNearClip);
+					ImGui::SetItemTooltip("Spread visibility depending on the distance to ray emmitor instead of ray target");
+					ImGui::Checkbox("Assume Commutative Rays", &m_visTreeSettings.commutativeRays);
+					ImGui::SetItemTooltip("Speeds up VisTree generation by a factor of 2x to 3x with minimal loss of precision.");
+					ImGui::Checkbox("Center-Only Samples", &m_visTreeSettings.centerOnlySamples);
+					ImGui::SetItemTooltip("Only casts rays from each quad center (skips corner samples). Much faster, but may miss narrow visibility paths.");
+					ImGui::Checkbox("Ground-Only RayCast", &m_visTreeSettings.castFromGroundOnly);
+					ImGui::SetItemTooltip("Only casts rays from Ground and Kicker_2 quads. Less visibility, but can avoid unwanted raycast");
+					ImGui::TreePop();
+				}
 				ImGui::TreePop();
 			}
-			if (generateBSPButton.Show("Generate", buttonMessage, false))
+			if (generateBSPButton.Show("Generate BSP", buttonMessage, false))
 			{
 				if (GenerateBSP()) { buttonMessage = "Successfully generated the BSP tree."; }
 				else { buttonMessage = "Failed generating the BSP tree."; }
 			}
+			if (generateVisTreeButton.Show("Generate VisTree", buttonMessage, false))
+			{
+				if (GenerateVisTreeOnly()) { buttonMessage = "Successfully generated the VisTree."; }
+				else { buttonMessage = "Failed generating the VisTree."; }
+			}
+			ImGui::SetItemTooltip("Generating the vis tree may take several minutes, but the gameplay will be more performant.");
 		}
 		ImGui::End();
 	}
@@ -1229,7 +1468,7 @@ void Level::RenderUI(Renderer& renderer)
 					unsigned cpStartPoints = checkboxPair("Show Checkpoints", &GuiRenderSettings::showCheckpoints, "Show Starting Positions", &GuiRenderSettings::showStartpoints);
 					if (cpStartPoints & REND_FLAGS_COLUMN_1) { GenerateRenderStartpointData(); }
 					checkboxPair("Show BSP", &GuiRenderSettings::showBspRectTree, "Show Vis Tree", &GuiRenderSettings::showVisTree);
-					unsigned skyboxRenderChanged = checkboxPair("Show Skybox", &GuiRenderSettings::showSkybox, "", nullptr);
+					unsigned skyboxRenderChanged = checkboxPair("Show Skybox", &GuiRenderSettings::showSkybox, "Show BotNodes", &GuiRenderSettings::showBots);
 					if (skyboxRenderChanged & REND_FLAGS_COLUMN_0) { GenerateRenderSkyboxData(); }
 
 					ImGui::EndTable();
@@ -1452,6 +1691,117 @@ void Level::RenderUI(Renderer& renderer)
 				ImGui::TextUnformatted(m_pythonConsole.c_str());
 			}
 			ImGui::EndChild();
+		}
+		ImGui::End();
+	}
+	if (Settings::w_bot)
+	{
+		if (ImGui::Begin("Bot Paths", &Settings::w_bot))
+		{
+			static std::filesystem::path s_objPaths[3];
+			static std::string s_objNames[3] = { "No file selected", "No file selected", "No file selected" };
+			static std::string generatePathButtonMessage[3];
+			static ButtonUI generatePathButton[3] = { ButtonUI(), ButtonUI(), ButtonUI() };
+
+			ImGui::SeparatorText("Settings");
+			ImGui::Checkbox("Use Manual Path", &m_botPathSettings.useManualPath);
+			ImGui::SameLine();
+			ImGui::BeginDisabled(m_botPathSettings.useManualPath);
+			ImGui::SetNextItemWidth(200.0f);
+			ImGui::DragFloat("Sideway Path Offset", &m_botPathSettings.sidewayOffset, 0.1f, 0.1f, 30.0f, "%.1f");
+			ImGui::EndDisabled();
+			ImGui::Checkbox("Normalize Node Distance", &m_botPathSettings.normalizeNodeDist);
+			if (m_botPathSettings.normalizeNodeDist)
+			{
+				ImGui::SameLine();
+				ImGui::SetNextItemWidth(200.0f);
+				ImGui::DragFloat("Node Distance", &m_botPathSettings.nodeDistance, 0.1f, 0.1f, 30.0f, "%.1f");
+			}
+
+			for (int i = 0; i < 3; i++)
+			{
+				ImGui::PushID(i);
+				const std::string pathLabel = "Bot Path " + std::to_string(i);
+				ImGui::SeparatorText(pathLabel.c_str());
+				// File selection
+				ImGui::SetNextItemWidth(200.0f);
+				ImGui::BeginDisabled();
+				ImGui::InputText("##botpathobj", &s_objNames[i], ImGuiInputTextFlags_ReadOnly);
+				ImGui::EndDisabled();
+				ImGui::SameLine();
+				ImGui::BeginDisabled(!m_botPathSettings.useManualPath);
+				if (ImGui::Button(("Browse##selectbotpath" + std::to_string(i)).c_str()))
+				{
+					auto selection = pfd::open_file("Select Path OBJ", ".",
+						{ "OBJ Files", "*.obj", "All Files", "*" }).result();
+
+					if (!selection.empty())
+					{
+						s_objPaths[i] = selection[0];
+						s_objNames[i] = s_objPaths[i].filename().string();
+					}
+				}
+
+				ImGui::SameLine();
+
+				if (ImGui::Button(("Clear##selectbotpath" + std::to_string(i)).c_str()))
+				{
+					s_objPaths[i].clear();
+					s_objNames[i] = "No file selected";
+				}
+				ImGui::EndDisabled();
+
+				// Generate button
+
+				if (generatePathButton[i].Show(("Generate BotPath " + std::to_string(i)).c_str(), generatePathButtonMessage[i], false))
+				{
+					bool success = false;
+					if (m_botPathSettings.useManualPath && !s_objPaths[i].empty())
+					{
+						std::vector<Vec3> vec = LoadPath(s_objPaths[i]);
+						if (m_botPathSettings.normalizeNodeDist)
+							vec = NormalizePos(vec, m_botPathSettings.nodeDistance); 
+						success = m_botPaths[i].GeneratePath(vec, m_quadblocks);
+					}
+					else
+					{
+						// use checkpoint node for the bot node.
+						std::vector<Vec3> vec;
+						int ckpt_id = 0;
+						while (m_checkpoints[ckpt_id].GetUp() > 0)
+						{
+							vec.push_back(m_checkpoints[ckpt_id].GetPos());
+							ckpt_id = m_checkpoints[ckpt_id].GetUp();
+						}
+
+						if (m_botPathSettings.normalizeNodeDist) 
+							vec = NormalizePos(vec, m_botPathSettings.nodeDistance); 
+						if (i == 1) // Middle Path
+						{
+							success = m_botPaths[i].GeneratePath(vec, m_quadblocks);
+						}
+						else
+						{
+							BotPath middlePath{};
+							middlePath.GeneratePath(vec, m_quadblocks);
+							vec = GenerateLateralPath(middlePath.GetNodes(), i == 0 ? -m_botPathSettings.sidewayOffset : +m_botPathSettings.sidewayOffset, m_quadblocks);
+							if (m_botPathSettings.normalizeNodeDist) 
+								vec = NormalizePos(vec, m_botPathSettings.nodeDistance);
+							success = m_botPaths[i].GeneratePath(vec, m_quadblocks);
+						}
+					}
+
+					if (!success)
+						generatePathButtonMessage[i] = "Failed to generate BotPath";
+					else
+						generatePathButtonMessage[i] = "Successfully generated BotPath";
+					UpdateRenderBotData();
+					GenerateBotPathChangeCode();
+				}
+				m_botPaths[i].RenderUI(i);
+				if (i<2){ ImGui::Separator(); }
+				ImGui::PopID();
+			}
 		}
 		ImGui::End();
 	}
@@ -1692,6 +2042,9 @@ bool Quadblock::RenderUI(size_t checkpointCount, bool& resetBsp)
 		if (ImGui::TreeNode("Draw Flags"))
 		{
 			ImGui::Checkbox("Double Sided", &m_doubleSided);
+			ImGui::Text("Z depth bias:");
+			ImGui::SameLine();
+			if (ImGui::InputInt("##draworderHigh", &m_drawOrderHigh)) { m_drawOrderHigh = Clamp(m_drawOrderHigh, static_cast<int>(INT8_MIN), static_cast<int>(INT8_MAX)); }
 			const std::vector<std::string> s_rotateFlip = {"None", "Rotate 90", "Rotate 180", "Rotate -90", "Flip + Rotate 90", "Flip + Rotate 180", "Flip + Rotate -90", "Flip"};
 			const std::vector<std::string> s_faceDrawMode = {"Both", "Left", "Right", "None"};
 

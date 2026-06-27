@@ -285,9 +285,9 @@ void init_crashteameditor(py::module_& m)
 		.export_values();
 
 	py::class_<QuadFlags>(m, "QuadFlags")
-		.def_readonly_static("INVISIBLE", &QuadFlags::INVISIBLE)
+		.def_readonly_static("REFLECTION_2", &QuadFlags::REFLECTION_2)
 		.def_readonly_static("MOON_GRAVITY", &QuadFlags::MOON_GRAVITY)
-		.def_readonly_static("REFLECTION", &QuadFlags::REFLECTION)
+		.def_readonly_static("REFLECTION_1", &QuadFlags::REFLECTION_1)
 		.def_readonly_static("KICKERS", &QuadFlags::KICKERS)
 		.def_readonly_static("OUT_OF_BOUNDS", &QuadFlags::OUT_OF_BOUNDS)
 		.def_readonly_static("NEVER_USED", &QuadFlags::NEVER_USED)
@@ -356,6 +356,7 @@ void init_crashteameditor(py::module_& m)
 		.def_property("checkpoint_status", &Quadblock::GetCheckpointStatus, &Quadblock::SetCheckpointStatus)
 		.def_property("checkpoint_pathable", &Quadblock::GetCheckpointPathable, &Quadblock::SetCheckpointPathable)
 		.def_property("vistree_transparent", &Quadblock::GetVisTreeTransparent, &Quadblock::SetVisTreeTransparent)
+		.def_property("z_depth_bias", &Quadblock::GetDrawOrderHigh, &Quadblock::SetDrawOrderHigh)
 		.def_property("tex_path",
 			[](const Quadblock& qb) { return std::filesystem::path(qb.GetTexPath()); },
 			&Quadblock::SetTexPath)
@@ -446,7 +447,7 @@ void init_crashteameditor(py::module_& m)
 		.def("is_ready", &Path::IsReady)
 		.def("set_index", &Path::SetIndex)
 		.def("update_dist", &Path::UpdateDist, py::arg("dist"), py::arg("ref_point"), py::arg("checkpoints"))
-		.def("generate_path", &Path::GeneratePath, py::arg("path_start_index"), py::arg("quadblocks"))
+		.def("generate_path", &Path::GeneratePath, py::arg("path_start_index"), py::arg("quadblocks"), py::arg("overlap"))
 		.def_property("color",
 			[](const Path& p) { return p.GetColor(); },
 			[](Path& p, const Color& color) { p.SetColor(color); })
@@ -456,6 +457,7 @@ void init_crashteameditor(py::module_& m)
 	py::bind_vector<std::vector<Quadblock>>(m, "QuadblockList");
 	py::bind_vector<std::vector<Checkpoint>>(m, "CheckpointList");
 	py::bind_vector<std::vector<Path>>(m, "PathList");
+	py::bind_vector<std::vector<BotNode>>(m, "BotNodeList");
 	py::bind_vector<std::vector<size_t>>(m, "IndexList");
 
 	py::enum_<BSPNode> bspNode(m, "BSPNode");
@@ -527,8 +529,30 @@ void init_crashteameditor(py::module_& m)
 			return nodes;
 		})
 		.def("set_quadblock_indexes", &BSP::SetQuadblockIndexes)
+		.def("split_leaf", &BSP::SplitLeaf, py::arg("quadblocks"), py::arg("axis"), py::arg("midpoint"))
 		.def("clear", &BSP::Clear)
 		.def("generate", &BSP::Generate, py::arg("quadblocks"), py::arg("max_quads_per_leaf"), py::arg("max_axis_length"));
+
+
+	py::class_<BitMatrix>(m, "VisTree")
+		.def(py::init<>())
+		.def("get", &BitMatrix::Get, py::arg("x"), py::arg("y"))
+		.def("set", &BitMatrix::Set, py::arg("val"), py::arg("x"), py::arg("y"));
+
+
+
+	py::class_<BotNode>(m, "BotNode")
+		.def(py::init<>())
+		.def_property("pos", [](const BotNode& n) { return n.GetPos(); },[](BotNode& n, const Vec3& v) { n.SetPos(v); })
+		.def_property("yaw",&BotNode::GetYaw,&BotNode::SetYaw)
+		.def_property("pitch",&BotNode::GetPitch,&BotNode::SetPitch)
+		.def_property("roll",&BotNode::GetRoll,&BotNode::SetRoll)
+		.def_property("flags",&BotNode::GetFlags,&BotNode::SetFlags)
+		.def_property("go_back_count",&BotNode::GetGoBackCount,&BotNode::SetGoBackCount)
+		.def_property("path_change",&BotNode::GetPathChange,&BotNode::SetPathChange)
+		.def_property("path_change_index", &BotNode::GetPathChangeIndex, &BotNode::SetPathChangeIndex)
+		.def_property("special_bits", &BotNode::GetSpecialBits, &BotNode::SetSpecialBits);
+
 
 	py::class_<Level> level(m, "Level");
 	level
@@ -538,12 +562,15 @@ void init_crashteameditor(py::module_& m)
 		.def_property_readonly("is_loaded", &Level::IsLoaded)
 		.def("clear", &Level::Clear, py::arg("clear_errors") = true)
 		.def("reset_filter", &Level::ResetFilter)
+		.def("reset_renderer", &Level::GenerateRenderLevData)
 		.def("update_renderer_checkpoints", &Level::UpdateRenderCheckpointData)
 		.def_property_readonly("name", &Level::GetName, py::return_value_policy::copy)
 		.def_property_readonly("quadblocks", &Level::GetQuadblocks, py::return_value_policy::reference_internal)
 		.def_property_readonly("bsp", &Level::GetBSP, py::return_value_policy::reference_internal)
+		.def_property_readonly("vistree", &Level::GetVisTree, py::return_value_policy::reference_internal)
 		.def_property_readonly("checkpoints", &Level::GetCheckpoints, py::return_value_policy::reference_internal)
 		.def_property_readonly("checkpoint_paths", &Level::GetCheckpointPaths, py::return_value_policy::reference_internal)
+		.def("bot_path", &Level::GetBotPath, py::arg("path_index"), py::return_value_policy::reference_internal)
 		.def_property_readonly("model_level", &Level::GetLevelModel, py::return_value_policy::reference_internal)
 		.def_property_readonly("model_bsp", &Level::GetBspModel, py::return_value_policy::reference_internal)
 		.def_property_readonly("model_spawn", &Level::GetSpawnModel, py::return_value_policy::reference_internal)
@@ -556,6 +583,7 @@ void init_crashteameditor(py::module_& m)
 		.def("get_material_quadblock_indexes", &Level::GetMaterialQuadblockIndexes, py::arg("material"), py::return_value_policy::copy)
 		.def("load_preset", &Level::LoadPreset, py::arg("filename"))
 		.def("save_preset", &Level::SavePreset, py::arg("path"))
+		.def("generate_vistree", static_cast<bool (Level::*)(bool, float, float)>(& Level::GenerateVisTreeOnly), py::arg("simple_vistree"), py::arg("distance_near_clip"), py::arg("distance_far_clip"))
 		.def("get_renderer_selected_data", [](Level& level) {
 			auto selection = level.GetRendererSelectedData();
 			const auto& quadblocks = std::get<0>(selection);

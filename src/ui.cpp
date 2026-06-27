@@ -25,6 +25,7 @@ bool Settings::w_renderer = false;
 bool Settings::w_ghost = false;
 bool Settings::w_python = false;
 bool Settings::w_modelImporter = false;
+bool Settings::w_bot = false;
 std::string Settings::m_lastOpenedFolder = ".";
 std::string Settings::m_lastOpenedScriptFolder = ".";
 
@@ -57,13 +58,34 @@ void UI::MainMenu()
 					else { m_rend.SetCameraToLevelSpawn(m_lev.m_spawn[1].pos, m_lev.m_spawn[1].rot); }
 				}
 			}
-			if (ImGui::MenuItem("Save", nullptr, nullptr, m_lev.IsLoaded()))
+			if (ImGui::MenuItem("Save LEV + VRM", nullptr, nullptr, m_lev.IsLoaded()))
 			{
 				auto selection = pfd::select_folder("Level Folder", m_lev.GetParentPath().string(), pfd::opt::force_path).result();
 				if (!selection.empty())
 				{
 					const std::filesystem::path path = selection + "\\";
-					m_lev.Save(path);
+					m_lev.SaveLEV(path, false);
+				}
+			}
+
+			if (ImGui::MenuItem("Save LEV only", nullptr, nullptr, m_lev.IsLoaded() && m_lev.HasRawTexture()))
+			{
+				auto selection = pfd::select_folder("Level Folder", m_lev.GetParentPath().string(), pfd::opt::force_path).result();
+				if (!selection.empty())
+				{
+					const std::filesystem::path path = selection + "\\";
+					m_lev.SaveLEV(path, true);
+				}
+			}
+
+			if (ImGui::MenuItem("Save OBJ", nullptr, nullptr, m_lev.IsLoaded()))
+			{
+				auto selection = pfd::save_file("Level Folder", m_lev.GetParentPath().string(), { "OBJ Files", "*.obj" }, pfd::opt::force_path).result();
+				if (!selection.empty())
+				{
+					std::filesystem::path objPath = selection;
+					if (!objPath.has_extension()) { objPath.replace_extension(".obj"); }
+					m_lev.SaveOBJ(objPath);
 				}
 			}
 

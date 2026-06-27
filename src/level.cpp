@@ -11,8 +11,12 @@
 #include "text3d.h"
 #include "levdataextractor.h"
 
+
+#include <filesystem>
+#include <iostream>
 #include <fstream>
 #include <unordered_set>
+#include <set>
 #include <map>
 #include <algorithm>
 
@@ -28,7 +32,7 @@ bool Level::Load(const std::filesystem::path& filename)
 
 bool Level::Save(const std::filesystem::path& path)
 {
-	return SaveLEV(path);
+	return false;// SaveLEV(path);
 }
 
 bool Level::IsLoaded() const
@@ -84,19 +88,24 @@ void Level::Clear(bool clearErrors)
 	m_animTextures.clear();
 	m_rendererQueryPoint = Vec3();
 	m_rendererSelectedQuadblockIndexes.clear();
-	m_genVisTree = false;
-	m_simpleVisTree = false;
+	//m_genVisTree = false;
 	m_bspVis.Clear();
 	m_maxQuadPerLeaf = 31;
 	m_maxLeafAxisLength = 64.0f;
-	m_distanceNearClip = -1.0f;
-	m_distanceFarClip = 1000.0f;
+	m_visTreeSettings = VisTreeSettings();
 	m_pythonConsole.clear();
 	m_saveScript = false;
 	m_vrm.clear();
 	m_lastAnimTextureCount = 0;
 	DeleteMaterials(this);
 	m_skybox.Clear();
+	m_splitLines[0] = 0.0;
+	m_splitLines[1] = 0.0;
+	m_jumpYSpeedCap = 0;
+	for (int i = 0; i < 3; i++)
+	{
+		m_botPaths[i].Clear();
+	}
 
 	for (Model* model : m_models)
 	{
@@ -141,6 +150,11 @@ BSP& Level::GetBSP()
 	return m_bsp;
 }
 
+BitMatrix& Level::GetVisTree()
+{
+	return m_bspVis;
+}
+
 std::vector<Checkpoint>& Level::GetCheckpoints()
 {
 	return m_checkpoints;
@@ -149,6 +163,11 @@ std::vector<Checkpoint>& Level::GetCheckpoints()
 std::vector<Path>& Level::GetCheckpointPaths()
 {
 	return m_checkpointPaths;
+}
+
+std::vector<BotNode>& Level::GetBotPath(int i)
+{
+	return m_botPaths[i].GetNodes();
 }
 
 const std::filesystem::path& Level::GetParentPath() const
@@ -201,6 +220,11 @@ Model* Level::GetCheckpointModel()
 	return m_models[LevelModels::CHECKPOINT];
 }
 
+Model* Level::GetBotModel()
+{
+	return m_models[LevelModels::BOT];
+}
+
 Model* Level::GetSelectedModel()
 {
 	return m_models[LevelModels::SELECTED];
@@ -216,6 +240,52 @@ Model* Level::GetFilterModel()
 	return m_models[LevelModels::FILTER];
 }
 
+
+bool Level::GenerateSpawn(float colSpacing, float rowSpacing)
+{
+	if (m_checkpoints.size() < 2)
+		return false;
+
+	Vec3 up = { 0.0f, 1.0f, 0.0f };
+	Vec3 cp0 = m_checkpoints[0].GetPos();
+	Vec3 cp1 = m_checkpoints[1].GetPos();
+	Vec3 center = m_checkpoints[m_checkpoints[0].GetDown()].GetPos();
+	Vec3 forward = cp1 - cp0;
+	forward.y = 0;
+	float yaw = - std::atan2(forward.z, forward.x) * (180.0f / 3.14159265f);
+	yaw = std::fmod(yaw, 360.0f);
+	forward.Normalize();
+	Vec3 right = forward.Cross(up);
+
+	for (int row = 0; row < 2; row++)
+	{
+		for (int col = 0; col < 4; col++)
+		{
+			int index = row * 4 + col;
+			float lateralOffset = (col - 1.5f) * colSpacing;
+			float forwardOffset = (row - 0.5f) * rowSpacing;
+			Vec3 pos = center + right * lateralOffset + forward * forwardOffset;
+			bool isInRange = false;
+			int lastCkpt = m_checkpoints[0].GetDown();
+			int prevCkpt = m_checkpoints[lastCkpt].GetDown();
+			for (const Quadblock& quad : m_quadblocks)
+			{
+				if (quad.GetCheckpoint() != lastCkpt && quad.GetCheckpoint() != prevCkpt)
+					continue;
+				if (isAboveQuad(pos, quad, pos.y))
+					isInRange = true;
+			}
+			if (!isInRange)
+				return false;
+			m_spawn[index].pos = pos;
+			m_spawn[index].rot.x = 0.0f;
+			m_spawn[index].rot.y = yaw;
+			m_spawn[index].rot.z = 0.0f;
+		}
+	}
+	return true;
+}
+
 bool Level::GenerateBSP()
 {
 	std::vector<size_t> quadIndexes;
@@ -226,11 +296,213 @@ bool Level::GenerateBSP()
 	if (m_bsp.IsValid())
 	{
 		GenerateRenderBspData();
-		if (m_genVisTree) { m_bspVis = GenerateVisTree(m_quadblocks, &m_bsp, m_simpleVisTree, m_distanceNearClip, m_distanceFarClip); }
 		return true;
 	}
 	m_bsp.Clear();
 	return false;
+}
+
+
+bool Level::GenerateVisTreeOnly(bool simpleVisTree, float distanceNearClip, float distanceFarClip)
+{
+	if (m_bsp.IsValid())
+	{
+		VisTreeSettings settings;
+		settings.farClipDistance = distanceFarClip;
+		settings.nearClipDistance = distanceNearClip;
+		settings.centerOnlySamples = simpleVisTree; 
+		settings.commutativeRays = false;
+		m_bspVis = GenerateVisTree(m_quadblocks, &m_bsp, settings);
+		return true;
+	}
+	return false;
+}
+
+
+bool Level::GenerateVisTreeOnly()
+{
+	if (m_bsp.IsValid())
+	{
+		m_bspVis = GenerateVisTree(m_quadblocks, &m_bsp, m_visTreeSettings);
+		return true;
+	}
+	return false;
+}
+
+
+std::vector<Vec3> Level::LoadPath(const std::filesystem::path& path)
+{
+	std::ifstream file(path);
+	if (!file.is_open())
+		return {};
+
+	std::vector<Vec3>                        rawVertices;
+	std::unordered_map<int, int>             adjacency;   // edge map: from -> to (1-based)
+	bool                                     inFirstObject = false;
+
+	std::string line;
+	while (std::getline(file, line))
+	{
+		if (line.empty() || line[0] == '#')
+			continue;
+
+		std::istringstream ss(line);
+		std::string        token;
+		ss >> token;
+
+		if (token == "o")
+		{
+			// Only parse the first object
+			if (!inFirstObject)
+				inFirstObject = true;
+			else
+				break;
+		}
+		else if (token == "v" && inFirstObject)
+		{
+			float x, y, z;
+			ss >> x >> y >> z;
+			rawVertices.emplace_back(x, y, z);
+		}
+		else if (token == "l" && inFirstObject)
+		{
+			int a, b;
+			if (ss >> a >> b)
+				adjacency[a] = b;  // directed edge a -> b (OBJ indices are 1-based)
+		}
+	}
+
+	if (rawVertices.empty() || adjacency.empty())
+		return rawVertices;
+
+	// Find the start of the chain: a vertex that appears as a source but never as a destination
+	std::unordered_set<int> destinations;
+	for (auto& [from, to] : adjacency)
+		destinations.insert(to);
+
+	int start = -1;
+	for (auto& [from, to] : adjacency)
+	{
+		if (destinations.find(from) == destinations.end())
+		{
+			start = from;
+			break;
+		}
+	}
+
+	// Fallback: if it's a closed loop, just pick any start
+	if (start == -1 && !adjacency.empty())
+		start = adjacency.begin()->first;
+
+	// Walk the chain in edge order
+	std::vector<Vec3> ordered;
+	ordered.reserve(rawVertices.size());
+
+	int current = start;
+	while (adjacency.count(current))
+	{
+		// OBJ indices are 1-based
+		ordered.push_back(rawVertices[current - 1]);
+		int next = adjacency[current];
+		adjacency.erase(current);  // prevent infinite loops on malformed data
+		current = next;
+	}
+	// Push the final vertex (the chain end that has no outgoing edge)
+	if (current >= 1 && current <= static_cast<int>(rawVertices.size()))
+		ordered.push_back(rawVertices[current - 1]);
+
+	return ordered;
+}
+
+
+void Level::GenerateBotPathChangeCode()
+{
+	// For each node on a path, find the closest node on the target path
+	// and set the PathChange and PathChangeIndex accordingly.
+	auto findClosestNode = [](const std::vector<BotNode>& targetNodes, const Vec3& pos) -> int
+		{
+			int   bestIndex = 0;
+			float bestDist = FLT_MAX;
+			for (int i = 0; i < static_cast<int>(targetNodes.size()); i++)
+			{
+				const Vec3& targetPos = targetNodes[i].GetPos();
+				const float dx = pos.x - targetPos.x;
+				const float dy = pos.y - targetPos.y;
+				const float dz = pos.z - targetPos.z;
+				const float dist = dx * dx + dy * dy + dz * dz; // squared, no need for sqrt
+				if (dist < bestDist)
+				{
+					bestDist = dist;
+					bestIndex = i;
+				}
+			}
+			return bestIndex;
+		};
+
+	// Validate that all 3 paths are valid before proceeding
+	for (int i = 0; i < 3; i++)
+	{
+		if (!m_botPaths[i].IsValid())
+		{
+			// Can't generate path change codes without all 3 paths
+			return;
+		}
+	}
+
+	const std::vector<BotNode>& leftNodes = m_botPaths[0].GetNodes();
+	const std::vector<BotNode>& middleNodes = m_botPaths[1].GetNodes();
+	const std::vector<BotNode>& rightNodes = m_botPaths[2].GetNodes();
+
+	// --- Path 0 (Left): can only switch to Middle (1) ---
+	for (int i = 0; i < static_cast<int>(leftNodes.size()); i++)
+	{
+		BotNode& node = m_botPaths[0].GetNode(i);
+		const int closestMid = findClosestNode(middleNodes, node.GetPos());
+		node.SetPathChange(1);
+		node.SetPathChangeIndex(closestMid);
+	}
+
+	// --- Path 2 (Right): can only switch to Middle (1) ---
+	for (int i = 0; i < static_cast<int>(rightNodes.size()); i++)
+	{
+		BotNode& node = m_botPaths[2].GetNode(i);
+		const int closestMid = findClosestNode(middleNodes, node.GetPos());
+		node.SetPathChange(1);
+		node.SetPathChangeIndex(closestMid);
+	}
+
+	// --- Path 1 (Middle): can switch to Left (0) or Right (2) ---
+	// Alternate between left and right to distribute switches evenly,
+	// so the AI doesn't always prefer one side.
+	for (int i = 0; i < static_cast<int>(middleNodes.size()); i++)
+	{
+		BotNode& node = m_botPaths[1].GetNode(i);
+		if (i % 2 == 0)
+		{
+			// Switch to Left
+			const int closestLeft = findClosestNode(leftNodes, node.GetPos());
+			node.SetPathChange(0);
+			node.SetPathChangeIndex(closestLeft);
+		}
+		else
+		{
+			// Switch to Right
+			const int closestRight = findClosestNode(rightNodes, node.GetPos());
+			node.SetPathChange(2);
+			node.SetPathChangeIndex(closestRight);
+		}
+	}
+}
+
+
+void Level::GenerateBotPathLeft()
+{
+	std::vector<Vec3> pos;
+	for (BotNode& node : m_botPaths[0].GetNodes())
+	{
+		pos.push_back(node.GetPos());
+	}
+	m_botPaths[0].GeneratePath(pos, m_quadblocks);
 }
 
 bool Level::GenerateCheckpoints()
@@ -239,12 +511,18 @@ bool Level::GenerateCheckpoints()
 
 	for (const Path& path : m_checkpointPaths) { if (!path.IsReady()) { return false; } }
 
+	ResetFilter();
+	for (size_t i = 0; i < m_quadblocks.size(); i++)
+	{
+		m_quadblocks[i].SetCheckpoint(-1);
+	}
 	size_t checkpointIndex = 0;
 	std::vector<size_t> linkNodeIndexes;
 	std::vector<std::vector<Checkpoint>> pathCheckpoints;
+	bool overlap = false;
 	for (Path& path : m_checkpointPaths)
 	{
-		pathCheckpoints.push_back(path.GeneratePath(checkpointIndex, m_quadblocks));
+		pathCheckpoints.push_back(path.GeneratePath(checkpointIndex, m_quadblocks, overlap));
 		checkpointIndex += pathCheckpoints.back().size();
 		linkNodeIndexes.push_back(path.GetStart());
 		linkNodeIndexes.push_back(path.GetEnd());
@@ -280,6 +558,20 @@ bool Level::GenerateCheckpoints()
 		{
 			size_t linkUp = (i + 1) % linkNodeIndexes.size();
 			node.UpdateUp(static_cast<int>(linkNodeIndexes[linkUp]));
+		}
+	}
+
+	for (Path& path : m_checkpointPaths)
+	{
+		const Checkpoint& middleStart = m_checkpoints[path.GetStart()];
+		const Checkpoint& middleEnd = m_checkpoints[path.GetEnd()];
+
+		Path* sides[2] = { path.GetLeft(), path.GetRight() };
+		for (Path* side : sides)
+		{
+			if (!side) { continue; }
+			m_checkpoints[side->GetStart()].UpdateDown(middleStart.GetDown());
+			m_checkpoints[side->GetEnd()].UpdateUp(middleEnd.GetUp());
 		}
 	}
 
@@ -427,7 +719,7 @@ bool Level::GenerateCheckpoints()
 	}
 
 	UpdateRenderCheckpointData();
-	return true;
+	return !overlap;
 }
 
 
@@ -454,9 +746,15 @@ bool Level::LoadPreset(const std::filesystem::path& filename)
 	else if (header == PresetHeader::LEVEL)
 	{
 		if (json.contains("configFlags")) { m_configFlags = json["configFlags"]; }
+		if (json.contains("jumpYSpeedCap")) { m_jumpYSpeedCap = json["jumpYSpeedCap"]; }
 		if (json.contains("skyGradient")) { m_skyGradient = json["skyGradient"]; }
 		if (json.contains("clearColor")) { m_clearColor = json["clearColor"]; }
 		if (json.contains("stars")) { json["stars"].get_to(m_stars); }
+		if (json.contains("splitLines"))
+		{
+			m_splitLines[0] = json["splitLines"][0];
+			m_splitLines[1] = json["splitLines"][1];
+		}
 		if (json.contains("skyboxObjPath"))
 		{
 			std::string skyboxPath = json["skyboxObjPath"];
@@ -539,6 +837,11 @@ bool Level::LoadPreset(const std::filesystem::path& filename)
 						m_propVisTreeTransparent.SetPreview(material, json[material + "_visTreeTransparent"]);
 						m_propVisTreeTransparent.Apply(material, m_materialToQuadblocks[material], m_quadblocks);
 					}
+					if (json.contains(material + "_drawOrderHigh"))
+					{
+						m_propDrawOrderHigh.SetPreview(material, json[material + "_drawOrderHigh"]);
+						m_propDrawOrderHigh.Apply(material, m_materialToQuadblocks[material], m_quadblocks);
+					}
 				}
 			}
 		}
@@ -614,6 +917,8 @@ bool Level::SavePreset(const std::filesystem::path& path)
 	levelJson["skyGradient"] = m_skyGradient;
 	levelJson["clearColor"] = m_clearColor;
 	levelJson["stars"] = m_stars;
+	levelJson["jumpYSpeedCap"] = m_jumpYSpeedCap;
+	levelJson["splitLines"] = { m_splitLines[0], m_splitLines[1] };
 	if (!m_skybox.m_objPath.empty()) { levelJson["skyboxObjPath"] = m_skybox.m_objPath.string(); }
 	SaveJSON(dirPath / "level.json", levelJson);
 
@@ -643,6 +948,7 @@ bool Level::SavePreset(const std::filesystem::path& path)
 			materialJson[key + "_visTreeTransparent"] = m_propVisTreeTransparent.GetBackup(key);
 			materialJson[key + "_trigger"] = m_propTurboPads.GetBackup(key);
 			materialJson[key + "_speedImpact"] = m_propSpeedImpact.GetBackup(key);
+			materialJson[key + "_drawOrderHigh"] = m_propDrawOrderHigh.GetBackup(key);
 		}
 		materialJson["materials"] = materials;
 		SaveJSON(dirPath / "material.json", materialJson);
@@ -725,6 +1031,7 @@ void Level::ManageTurbopad(Quadblock& quadblock)
 		turboPad.SetTurboPadIndex(TURBO_PAD_INDEX_NONE);
 		turboPad.SetHide(true);
 		turboPad.SetAnimated(false);
+		turboPad.SetDrawOrderHigh(0);
 
 		size_t index = m_quadblocks.size();
 		turboPadIndex = quadblock.GetTurboPadIndex();
@@ -755,20 +1062,43 @@ void Level::ManageTurbopad(Quadblock& quadblock)
 	}
 }
 
+
 bool Level::LoadLEV(const std::filesystem::path& levFile)
 {
 	std::ifstream file(levFile, std::ios::binary);
+	if (!file.is_open()) return false;
+
+	m_hasRawTexture = true;
+
+	m_parentPath = levFile.parent_path();
+	m_name = levFile.filename().replace_extension().string() + "_edit";
 
 	uint32_t offPointerMap;
 	Read(file, offPointerMap);
 
 	std::streampos offLev = file.tellg();
+
+	std::set<uint32_t> pointerMap;
+	file.seekg(offLev + std::streampos(offPointerMap));
+	uint32_t pointerMapSize;
+	Read(file, pointerMapSize);
+	for (size_t i = 0; i < pointerMapSize / sizeof(uint32_t); i++)
+	{
+		uint32_t pointer;
+		Read(file, pointer);
+		pointerMap.insert(pointer);
+	}
+
+	file.seekg(offLev);
 	PSX::LevHeader header = {};
 	Read(file, header);
 
 	m_configFlags = header.config;
 	m_clearColor = ConvertColor(header.clear);
 	m_stars = ConvertStars(header.stars);
+	m_jumpYSpeedCap = static_cast<int>(header.jumpYSpeedCap);
+	m_splitLines[0] = ConvertFP(header.splitLines[0], FP_ONE_GEO);
+	m_splitLines[1] = ConvertFP(header.splitLines[1], FP_ONE_GEO);
 	for (size_t i = 0; i < m_spawn.size(); i++)
 	{
 		m_spawn[i].pos = ConvertPSXVec3(header.driverSpawn[i].pos, FP_ONE_GEO);
@@ -796,15 +1126,290 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		vertices.push_back(vertex);
 	}
 
+
+	// Loading textures and animated textures and quadblocks
+	std::filesystem::path vrmPath = levFile;
+	vrmPath.replace_extension(".vrm");
+	std::vector<uint16_t> vram =  ReadRawVRAM(vrmPath);
+	int texCounter = 0;
+	std::vector<uint32_t> quadblocksVisibleSetOff; // List of VisibleSetOffset for quadblock. Needed for vistree loading, parsed with quadblocks.
+	std::unordered_map<LayoutKey, PixelBounds> textureToPixelBounds; // Map Layout key -> Pixels bounds of the texture.
+	std::unordered_map<LayoutKey, std::string> materialCache; // Layout Key -> matName
+	std::map<size_t, std::map<size_t, uint32_t>> quadblockFaceToAnimOffset; // Map: quadblock index -> face index -> AnimTex offset
+	std::unordered_map<uint32_t, std::string> textureGroupToMaterial; // Map : texture group offset -> material name
+	m_rawAnimTex.clear(); // Map : Absolute Offset -> PSX::AnimTex
+	m_rawTextureGroup.clear(); // Map : Absolute Offset ->  PSX::TextureGroup
+	m_rawAnimTexFrames.clear(); // Map : Absolute Offset -> List of Absolute Offset for PSX::TextureGroup
+
+	std::filesystem::path tempDir = levFile.parent_path() / (levFile.stem().string() + "_textures");
+	std::filesystem::create_directories(tempDir);
+
+	bool hasAnimData = header.offAnimTex > 0;
+	size_t offAnimStart = header.offAnimTex;
+
+	
+	// 1st pass : Parse Quadblock, find TextureGroups, and caclulate UV bounds
+	// Take care of all texture group for static quad and animated quads
 	file.seekg(offLev + std::streampos(meshInfo.offQuadblocks));
 	for (uint32_t i = 0; i < meshInfo.numQuadblocks; i++)
 	{
-		PSX::Quadblock quadblock = {};
-		Read(file, quadblock);
-		m_quadblocks.emplace_back(quadblock, vertices, [this](const Quadblock& qb) { UpdateFilterRenderData(qb); });
-		m_materialToQuadblocks["default"].push_back(i);
+		PSX::Quadblock psxQuad = {};
+		Read(file, psxQuad);
+		std::streampos currentPosQuad = file.tellg();
+		for (int f = 0; f < NUM_FACES_QUADBLOCK + 1; f++)
+		{
+			uint32_t texOffset = f == NUM_FACES_QUADBLOCK ? psxQuad.offLowTexture : psxQuad.offMidTextures[f];
+
+			// How to know if a texture is animated or not : POINTERFLAG. ODD = ANIMTEX. EVEN = STATICTEX
+			if (hasAnimData && texOffset >= offAnimStart && pointerMap.contains(texOffset - 1)) // Anim Textures
+			{
+				if (!m_rawAnimTex.contains(texOffset-1))
+				{
+					file.seekg(offLev + std::streampos(texOffset-1));
+					PSX::AnimTex animTex;
+					Read(file, animTex);
+					m_rawAnimTex[texOffset - 1] = animTex;
+
+					std::vector<uint32_t> frameTextureGroupOffset;
+					for (uint16_t frame = 0; frame < animTex.frameCount; frame++)
+					{
+						uint32_t frameTexOffset;
+						Read(file, frameTexOffset);
+						frameTextureGroupOffset.push_back(frameTexOffset);
+
+						std::streampos currentPos = file.tellg();
+						file.seekg(offLev + static_cast<std::streamoff>(frameTexOffset));
+						PSX::TextureGroup group = {};
+						Read(file, group);
+						file.seekg(currentPos);
+						// Tempfix for vanilla : group.mosaic is broken for a lot of texture, need research
+						PSX::TextureGroup tempTexGroup = {};
+						tempTexGroup.far = group.far;
+						tempTexGroup.middle = group.middle;
+						tempTexGroup.near = group.near;
+						tempTexGroup.mosaic = group.near;
+						m_rawTextureGroup[frameTexOffset] = tempTexGroup;
+						const PSX::TextureLayout& layout = group.middle;
+						LayoutKey key(layout);
+
+						if (!materialCache.contains(key))
+						{
+							std::string newMatName = "tex_" + std::to_string(texCounter++);
+							materialCache[key] = newMatName;
+						}
+						textureGroupToMaterial[frameTexOffset] = materialCache[key];
+
+						RawUV rawUV(layout);
+						textureToPixelBounds[key].Update(rawUV);
+
+					}
+					m_rawAnimTexFrames[texOffset - 1] = frameTextureGroupOffset;
+				}
+
+				quadblockFaceToAnimOffset[i][f] = texOffset - 1;
+
+			}
+			else // Regular Textures
+			{
+				file.seekg(offLev + static_cast<std::streamoff>(texOffset));
+				PSX::TextureGroup group = {};
+				Read(file, group);
+				// Tempfix for vanilla : group.mosaic is broken for a lot of texture, need research
+				PSX::TextureGroup tempTexGroup = {};
+				tempTexGroup.far = group.far;
+				tempTexGroup.middle = group.middle;
+				tempTexGroup.near = group.near;
+				tempTexGroup.mosaic = group.near;
+				m_rawTextureGroup[texOffset] = tempTexGroup;
+				const PSX::TextureLayout& layout = group.middle;
+				LayoutKey key(layout);
+
+				if (!materialCache.contains(key))
+				{
+					std::string newMatName = "tex_" + std::to_string(texCounter++);
+					materialCache[key] = newMatName;
+				}
+				textureGroupToMaterial[texOffset] = materialCache[key];
+
+				RawUV rawUV(layout, psxQuad.drawOrderLow, f);
+				textureToPixelBounds[key].Update(rawUV);
+			}
+
+		}
+		file.seekg(currentPosQuad);
 	}
 
+	// 3rd pass : Create PNGs and Materials
+	for (const auto& [key, bounds] : textureToPixelBounds)
+	{
+		std::string newMatName = materialCache[key];
+		Texture newTexture(key, bounds, vram, newMatName, tempDir, true);
+		m_materialToTexture[newMatName] = newTexture;
+	}
+
+
+	// 4th pass : create quadblocks with material, UVs and texture	
+	file.seekg(offLev + std::streampos(meshInfo.offQuadblocks));
+	for (uint32_t i = 0; i < meshInfo.numQuadblocks; i++)
+	{
+		PSX::Quadblock psxQuad = {};
+		Read(file, psxQuad);
+		quadblocksVisibleSetOff.push_back(psxQuad.offVisibleSet);
+		Quadblock& qb = m_quadblocks.emplace_back(psxQuad, vertices, [this](const Quadblock& qb) { UpdateFilterRenderData(qb); });
+		bool materialAssigned = false;
+		std::string qbMatName = "default";
+		for (int f = 0; f < 4; f++) 
+		{
+			uint32_t texOffset = psxQuad.offMidTextures[f];
+			if (hasAnimData && texOffset >= offAnimStart && pointerMap.contains(texOffset - 1)) // Anim Texture
+			{
+				qb.SetAnimated(true);
+			}
+			
+			else 
+			{
+				std::streampos currentPos = file.tellg();
+				file.seekg(offLev + static_cast<std::streamoff>(texOffset));
+				PSX::TextureGroup group = {};
+				Read(file, group);
+				file.seekg(currentPos);
+
+				const PSX::TextureLayout& layout = group.middle;
+				LayoutKey key(layout);
+
+				if (!materialAssigned)
+				{
+					qbMatName = materialCache[key];
+					qb.SetMaterial(qbMatName);
+					qb.SetTexPath(m_materialToTexture[qbMatName].GetPath());
+					m_materialToQuadblocks[qbMatName].push_back(i);
+					materialAssigned = true;
+				}
+
+				RawUV rawUV(layout, psxQuad.drawOrderLow, f);
+				const PixelBounds& bounds = textureToPixelBounds[key];
+				float croppedWidth = static_cast<float>(bounds.maxU - bounds.minU);
+				float croppedHeight = static_cast<float>(bounds.maxV - bounds.minV);
+				if (croppedWidth == 0) croppedWidth = 1.0f;
+				if (croppedHeight == 0) croppedHeight = 1.0f;
+				QuadUV uvs = {
+					Vec2((rawUV.u0 - bounds.minU) / croppedWidth, (rawUV.v0 - bounds.minV) / croppedHeight),
+					Vec2((rawUV.u1 - bounds.minU) / croppedWidth, (rawUV.v1 - bounds.minV) / croppedHeight),
+					Vec2((rawUV.u2 - bounds.minU) / croppedWidth, (rawUV.v2 - bounds.minV) / croppedHeight),
+					Vec2((rawUV.u3 - bounds.minU) / croppedWidth, (rawUV.v3 - bounds.minV) / croppedHeight)
+				};
+				qb.SetFaceUVs(f, uvs);
+			}
+		}
+		if (!materialAssigned) 
+		{
+			qb.SetMaterial("default");
+			m_materialToQuadblocks["default"].push_back(i);
+		}
+	}
+
+	//5th pass : Create .obj for AnimText, and assign to quads
+	if (hasAnimData)
+	{
+		std::map<std::map<size_t, uint32_t>, std::set<size_t>> facePatternToQuadblocks;
+		for (const auto& [quadIdx, faceMap] : quadblockFaceToAnimOffset)
+		{
+			facePatternToQuadblocks[faceMap].insert(quadIdx);
+		}
+
+		std::set<std::map<size_t, uint32_t>> processedPatterns;
+		for (const auto& [faceMap, quadSet] : facePatternToQuadblocks)
+		{
+			if (processedPatterns.contains(faceMap)) continue;
+			if (faceMap.empty()) continue;
+
+			std::vector<size_t> quadIndices(quadSet.begin(), quadSet.end());
+
+			uint32_t firstAnimOffset = faceMap.begin()->second;
+			if (!m_rawAnimTex.contains(firstAnimOffset)) continue;
+
+			const PSX::AnimTex& firstAnimData = m_rawAnimTex[firstAnimOffset];
+			size_t frameCount = firstAnimData.frameCount;
+
+			// Verify all AnimTex in this pattern have the same frame count
+			bool validAnimation = true;
+			for (const auto& [faceIdx, animOffset] : faceMap)
+			{
+				if (!m_rawAnimTex.contains(animOffset) || !m_rawAnimTexFrames.contains(animOffset) || m_rawAnimTex[animOffset].frameCount != frameCount)
+				{
+					validAnimation = false;
+					break;
+				}
+			}
+			if (!validAnimation) continue;
+
+
+			std::array<std::vector<PSX::TextureLayout>, 4> faceFrameLayouts;
+			std::array<std::vector<std::string>, 4> faceFrameMaterials;
+
+			bool allMaterialsFound = true;
+
+			for (const auto& [faceIdx, animOffset] : faceMap)
+			{
+				for (uint32_t textureGroupOffset : m_rawAnimTexFrames.at(animOffset))
+				{
+					if (!textureGroupToMaterial.contains(textureGroupOffset)) 
+					{
+						allMaterialsFound = false;
+						break;
+					}
+					faceFrameMaterials[faceIdx].push_back(textureGroupToMaterial[textureGroupOffset]);
+					std::streampos savedPos = file.tellg();
+					file.seekg(offLev + std::streampos(textureGroupOffset));
+					PSX::TextureGroup group = {};
+					Read(file, group);
+					file.seekg(savedPos);
+					faceFrameLayouts[faceIdx].push_back(group.middle);
+				}
+				if (!allMaterialsFound) break;
+			}
+
+			if (!allMaterialsFound) continue;
+
+			// Create temporary OBJ file
+			std::string animName = "";
+			for (size_t faceIdx = 0; faceIdx < 4; faceIdx++)
+			{
+				if (faceFrameMaterials[faceIdx].size() != 0)
+				{
+					animName = faceFrameMaterials[faceIdx][0];
+					break;
+				}
+			}
+
+			std::filesystem::path animDir = tempDir / animName;
+			std::filesystem::create_directories(animDir);
+
+			AnimTexture animTexture(animName, tempDir, faceFrameLayouts, faceFrameMaterials, quadIndices, m_quadblocks, textureToPixelBounds, m_materialToTexture, firstAnimData, m_animTextures);
+
+			if (!animTexture.IsEmpty())
+			{
+				animTexture.SetStartFrame(firstAnimData.startAtFrame);
+				animTexture.SetDuration(firstAnimData.frameDuration);
+
+				for (size_t quadIdx : quadIndices)
+				{
+					animTexture.AddQuadblockIndex(quadIdx);
+					std::string oldMat = m_quadblocks[quadIdx].GetMaterial();
+					auto& v = m_materialToQuadblocks[oldMat];
+					v.erase(std::remove(v.begin(), v.end(), quadIdx), v.end());
+					m_quadblocks[quadIdx].SetMaterial(animName);
+					m_materialToQuadblocks[animName].push_back(quadIdx);
+				}
+				m_animTextures.push_back(animTexture);
+				processedPatterns.insert(faceMap);
+			}
+			else
+			{
+				printf("WARNING : Empty animtex\n");
+			}
+		}
+	}
 
 	m_bsp.Clear();
 	file.seekg(offLev + std::streampos(meshInfo.offBSPNodes));
@@ -831,6 +1436,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		{
 			PSX::BSPBranch branch = {};
 			Read(file, branch);
+			if (branch.unk2 != 0 || branch.unk3 != 0) { printf("Branch ID%d has child 3\n", branch.id); }
 			bspArray[branch.id]->PopulateBranch(branch, bspArray, meshInfo.numBSPNodes);
 		}
 	}
@@ -843,6 +1449,123 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		else { m_bsp.Clear(); }
 	}
 	else { m_bsp.Clear(); }
+	std::set<size_t> validID;
+	
+	printf("BSP ARRAY SIZE : %d\n", bspArray.size());
+	std::vector<const BSP*> tree = m_bsp.GetTree();
+	printf("BSP TREE SIZE : %d\n", tree.size());
+	for (const BSP* bsp : tree) { validID.insert(bsp->GetId()); }
+	for (BSP* bsp : bspArray) { if (!validID.contains(bsp->GetId())) { printf("ID %d isn't in tree\n", bsp->GetId()); } }
+	
+
+
+	// Load VisTree
+	if (header.offVisMem != 0)
+	{
+		file.seekg(offLev + static_cast<std::streamoff>(header.offVisMem));
+		PSX::VisualMem visMem = {};
+		Read(file, visMem);
+
+		if (visMem.offNodes[0] != 0)
+		{
+			std::vector<const BSP*> bspLeaves = m_bsp.GetLeaves();
+			std::vector<const BSP*> bspNodes = m_bsp.GetTree();
+
+			m_bspVis = BitMatrix(bspLeaves.size(), bspLeaves.size());
+
+			std::map<size_t, size_t> leafIdToMatrix;
+			for (size_t i = 0; i < bspLeaves.size(); i++)
+			{
+				leafIdToMatrix[bspLeaves[i]->GetId()] = i;
+			}
+
+			const size_t visNodeSize = (bspNodes.size() + 31) / 32;
+
+			auto decompressVisNodes = [&](std::streampos srcPos) -> std::vector<uint32_t>
+				{
+					std::vector<uint8_t> dst(visNodeSize * sizeof(uint32_t), 0);
+					file.seekg(srcPos);
+					size_t dstIdx = 0;
+					while (dstIdx < dst.size())
+					{
+						int8_t c;
+						Read(file, c);
+						if (c == 0) { break; }
+						if (c < 0)
+						{
+							int count = (-c) + 1;
+							uint8_t val;
+							Read(file, val);
+							for (int i = 0; i < count && dstIdx < dst.size(); i++)
+								dst[dstIdx++] = val;
+						}
+						else
+						{
+							int count = c;
+							for (int i = 0; i < count && dstIdx < dst.size(); i++)
+							{
+								uint8_t val;
+								Read(file, val);
+								dst[dstIdx++] = val;
+							}
+						}
+					}
+					std::vector<uint32_t> result(visNodeSize);
+					std::memcpy(result.data(), dst.data(), dst.size());
+					return result;
+				};
+
+			for (size_t q = 0; q < m_quadblocks.size(); q++)
+			{
+				uint32_t offVisibleSet = quadblocksVisibleSetOff[q];
+				if (offVisibleSet == 0) { continue; }
+				PSX::VisibleSet visSet = {};
+				file.seekg(offLev + static_cast<std::streamoff>(offVisibleSet));
+				Read(file, visSet);
+				if (visSet.offVisibleBSPNodes == 0) { continue; }
+				size_t leafID = m_quadblocks[q].GetBSPID() & ~BSPID::LEAF;
+				if (!leafIdToMatrix.contains(leafID)) { continue; }
+				size_t visTreeID = leafIdToMatrix[leafID];
+
+				bool compressed = visSet.offVisibleBSPNodes & 1;
+				uint32_t actualOff = visSet.offVisibleBSPNodes & ~3u;
+				std::streampos srcPos = offLev + static_cast<std::streamoff>(actualOff);
+
+				std::vector<uint32_t> visNodes;
+				if (compressed)
+				{
+					visNodes = decompressVisNodes(srcPos);
+				}
+				else
+				{
+					file.seekg(srcPos);
+					visNodes.resize(visNodeSize);
+					for (size_t i = 0; i < visNodeSize; i++) { Read(file, visNodes[i]); }
+				}
+
+				for (size_t i = 0; i < bspLeaves.size(); i++)
+				{
+					size_t destBspId = bspLeaves[i]->GetId();
+					if (destBspId / 32 >= visNodes.size()) { continue; }
+					uint32_t word = visNodes[destBspId / 32];
+					uint32_t bit = 1u << (31 - (destBspId % 32));
+					if (word & bit) { m_bspVis.Set(true, visTreeID, i); }
+				}
+			}
+		}
+		int count = 0;
+		for (size_t x = 0; x < m_bspVis.GetHeight(); x++)
+		{
+			for (size_t y = 0; y < m_bspVis.GetWidth(); y++)
+			{
+				if (m_bspVis.Get(x, y))
+					count++;
+			}
+		}
+		int max = static_cast<int>(m_bspVis.GetHeight() * m_bspVis.GetWidth());
+		float ratio = 100.0f * static_cast<float>(count) / static_cast<float>(max);
+		printf("Visibility: %d/%d,  %f%%\n", count, max, ratio);
+	}
 
 	file.seekg(offLev + std::streampos(header.offCheckpointNodes));
 	for (uint32_t i = 0; i < header.numCheckpointNodes; i++)
@@ -852,6 +1575,23 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		m_checkpoints.emplace_back(checkpoint, static_cast<int>(i));
 	}
 	UpdateRenderCheckpointData();
+
+	// Ghost checkpoint reading
+	file.seekg(offLev + std::streampos(header.offCheckpointNodes) + static_cast<std::streamoff>(255 * sizeof(PSX::Checkpoint)));
+	PSX::Checkpoint checkpoint255 = {};
+	Read(file, checkpoint255);
+	file.seekg(offLev + std::streampos(header.offCheckpointNodes) + static_cast<std::streamoff>(checkpoint255.linkUp * sizeof(PSX::Checkpoint)));
+	PSX::Checkpoint checkpoint255Next = {};
+	Read(file, checkpoint255Next);
+	file.seekg(offLev + std::streampos(header.offCheckpointNodes) + static_cast<std::streamoff>(checkpoint255Next.linkUp * sizeof(PSX::Checkpoint)));
+	PSX::Checkpoint checkpoint255NextNext = {};
+	Read(file, checkpoint255NextNext);
+	printf("Checkpoint 255's next : %d\n Checkpoint 255's next 's next : %d\n", checkpoint255.linkUp, checkpoint255Next.linkUp);
+
+
+
+
+
 
 	m_tropyGhost.clear();
 	m_oxideGhost.clear();
@@ -887,13 +1627,82 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		}
 	}
 
+	//Load Skybox
+	if (header.offSkybox != 0)
+	{
+		PSX::Skybox psxSkybox = {};
+		file.seekg(offLev + std::streampos(header.offSkybox));
+		Read(file, psxSkybox);
+
+		std::vector<PSX::SkyboxVertex> psxVerts(psxSkybox.numVertex);
+		file.seekg(offLev + std::streampos(psxSkybox.offVertex));
+		for (uint32_t i = 0; i < psxSkybox.numVertex; i++)
+		{
+			Read(file, psxVerts[i]);
+		}
+
+		std::vector<std::vector<uint16_t>> segmentIndices(PSX::NUM_SKYBOX_SEGMENTS);
+		for (size_t seg = 0; seg < PSX::NUM_SKYBOX_SEGMENTS; seg++)
+		{
+			const int16_t faceCount = psxSkybox.numFaces[seg];
+			if (faceCount <= 0 || psxSkybox.offFaces[seg] == 0) { continue; }
+
+			const size_t indexCount = static_cast<size_t>(faceCount) * PSX::SKYBOX_FACE_STRIDE;
+			segmentIndices[seg].resize(indexCount);
+			file.seekg(offLev + std::streampos(psxSkybox.offFaces[seg]));
+			for (size_t i = 0; i < indexCount; i++)
+			{
+				Read(file, segmentIndices[seg][i]);
+			}
+		}
+
+		std::filesystem::path objPath = m_parentPath / (levFile.filename().replace_extension().string() + "_skybox.obj");
+		if (m_skybox.LoadFromPSX(psxSkybox, psxVerts, segmentIndices, objPath)) 
+		{
+			GenerateRenderSkyboxData();
+		}
+	}
+
+	if (header.offLevNavTable != 0)
+	{
+		//printf("off Lev Nav Table : 0x%x\n", header.offLevNavTable);
+		file.seekg(offLev + std::streampos(header.offLevNavTable));
+		PSX::levAINavTable navTable{};
+		Read(file, navTable);
+		for (int i = 0; i < 3; i++)
+		{
+			if (navTable.offAIPathArray[i] != 0)
+			{
+				//printf("off AI Path Array %d : 0x%x\n", i, navTable.offAIPathArray[i]);
+				file.seekg(offLev + std::streampos(navTable.offAIPathArray[i]));
+				PSX::NavHeader navHeader{};
+				Read(file, navHeader);
+
+				std::vector<PSX::NavFrame> nodes;
+				PSX::NavFrame startLine{};
+				Read(file, startLine);
+				nodes.push_back(startLine);
+				for (int j = 0; j < navHeader.numPoints; j++)
+				{
+					PSX::NavFrame navFrame{};
+					Read(file, navFrame);
+					nodes.push_back(navFrame);
+					//printf("Pos %d : x=%d, y=%d, z=%d\n", j, navFrame.pos.x, navFrame.pos.y, navFrame.pos.z);
+					//printf("Rot %d : %d, %d, %d, %d\n", j, navFrame.rot[0], navFrame.rot[1], navFrame.rot[2], navFrame.rot[3]);
+				}
+				m_botPaths[i] = BotPath(navHeader, nodes);
+			}
+		}
+		UpdateRenderBotData();
+	}
+
 	m_loaded = true;
 	file.close();
 	GenerateRenderLevData();
 	return true;
 }
 
-bool Level::SaveLEV(const std::filesystem::path& path)
+bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 {
 	/*
 	*	Serialization order:
@@ -913,6 +1722,7 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 	*		- LevelExtraHeader
 	*		- NavHeaders
 	*		- VisMem
+	*		- Skybox
 	*		- PointerMap
 	*/
 	m_hotReloadLevPath = path / (m_name + ".lev");
@@ -955,56 +1765,135 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 	std::vector<uint8_t> animData;
 	std::vector<size_t> animPtrMapOffsets;
 	std::vector<PSX::TextureGroup> texGroups;
+	std::vector<PSX::AnimTex> animTexGroups;
 	std::unordered_map<PSX::TextureLayout, size_t> savedLayouts;
-	if (UpdateVRM())
+	if (useRawTextures)
 	{
-		for (auto& [material, texture] : m_materialToTexture)
+		std::map<uint32_t, size_t> rawOffsetRemap;
+		std::map<uint32_t, size_t> rawAnimOffsetRemap;
+		std::vector<std::pair<size_t, size_t>> animatedQuadFaceOffsets; // <quadIndex, faceIndex> -> animTexOffset
+		std::map<std::pair<size_t, size_t>, size_t> quadFaceToAnimOffset;
+
+		for (size_t qi = 0; qi < m_quadblocks.size(); qi++)
 		{
-			std::vector<size_t>& quadIndexes = m_materialToQuadblocks[material];
-			for (size_t index : quadIndexes)
+			Quadblock& currQuad = m_quadblocks[qi];
+			if (currQuad.GetAnimated())
 			{
-				Quadblock& currQuad = m_quadblocks[index];
-				if (currQuad.GetAnimated()) { continue; }
 				for (size_t i = 0; i < NUM_FACES_QUADBLOCK + 1; i++)
 				{
-					size_t textureID = 0;
-					const QuadUV& uvs = currQuad.GetQuadUV(i);
-					PSX::TextureLayout layout = texture.Serialize(uvs);
-					if (savedLayouts.contains(layout)) { textureID = savedLayouts[layout]; }
-					else
-					{
-						textureID = texGroups.size();
-						savedLayouts[layout] = textureID;
+					uint32_t rawTexOffset = currQuad.GetRawTexOffset(i);
+					uint32_t animTexKey = rawTexOffset - 1;
 
-						PSX::TextureGroup texGroup = {};
-						texGroup.far = layout;
-						texGroup.middle = layout;
-						texGroup.near = layout;
-						texGroup.mosaic = layout;
-						texGroups.push_back(texGroup);
+					if (!m_rawAnimTex.contains(animTexKey))
+					{
+						// This face is not animated, treat it as a static texture
+						if (!rawOffsetRemap.contains(rawTexOffset))
+						{
+							rawOffsetRemap[rawTexOffset] = texGroups.size();
+							if (!m_rawTextureGroup.contains(rawTexOffset))
+							{
+								printf("MISSING TEXTURE FOR %s FACE %d\n", currQuad.GetName().c_str(), i);
+							}
+							texGroups.push_back(m_rawTextureGroup[rawTexOffset]);
+						}
+						currQuad.SetTextureID(rawOffsetRemap[rawTexOffset], i);
+						continue;
 					}
-					currQuad.SetTextureID(textureID, i);
+
+					const PSX::AnimTex& animTex = m_rawAnimTex[animTexKey];
+					const std::vector<uint32_t>& frameOffsets = m_rawAnimTexFrames[animTexKey];
+
+					std::vector<size_t> remappedFrameIndexes;
+					for (uint32_t frameRawOffset : frameOffsets)
+					{
+						if (!rawOffsetRemap.contains(frameRawOffset))
+						{
+							rawOffsetRemap[frameRawOffset] = texGroups.size();
+							if (!m_rawTextureGroup.contains(frameRawOffset))
+							{
+								printf("MISSING FRAME TEXTURE FOR %s FACE %d FRAME OFFSET %u\n",
+									currQuad.GetName().c_str(), i, frameRawOffset);
+							}
+							texGroups.push_back(m_rawTextureGroup[frameRawOffset]);
+						}
+						remappedFrameIndexes.push_back(rawOffsetRemap[frameRawOffset]);
+					}
+
+					if (i == NUM_FACES_QUADBLOCK)
+					{
+						currQuad.SetTextureID(remappedFrameIndexes[0], i);
+						continue;
+					}
+
+					if (!rawAnimOffsetRemap.contains(animTexKey))
+					{
+						size_t animTexOffset = animData.size();
+						rawAnimOffsetRemap[animTexKey] = animTexOffset;
+						animPtrMapOffsets.push_back(animTexOffset);
+
+						PSX::AnimTex rawAnimTex = animTex;
+						rawAnimTex.offActiveFrame = static_cast<uint32_t>(
+							offTexture + (remappedFrameIndexes[0] * sizeof(PSX::TextureGroup)));
+						animData.resize(animData.size() + sizeof(PSX::AnimTex));
+						memcpy(&animData[animTexOffset], &rawAnimTex, sizeof(PSX::AnimTex));
+
+						for (size_t j = 0; j < remappedFrameIndexes.size(); j++)
+						{
+							uint32_t offset = static_cast<uint32_t>(
+								(remappedFrameIndexes[j] * sizeof(PSX::TextureGroup)) + offTexture);
+							size_t offAnimTexArr = animData.size();
+							animPtrMapOffsets.push_back(offAnimTexArr);
+							for (size_t k = 0; k < sizeof(uint32_t); k++) { animData.push_back(0); }
+							memcpy(&animData[offAnimTexArr], &offset, sizeof(uint32_t));
+						}
+					}
+
+					quadFaceToAnimOffset[{qi, i}] = rawAnimOffsetRemap[animTexKey];
 				}
+				continue;
+			}
+			for (size_t i = 0; i < NUM_FACES_QUADBLOCK + 1; i++)
+			{
+				uint32_t rawTexOffset = currQuad.GetRawTexOffset(i);
+				if (!rawOffsetRemap.contains(rawTexOffset))
+				{
+					rawOffsetRemap[rawTexOffset] = texGroups.size();
+					if (!m_rawTextureGroup.contains(rawTexOffset)) { printf("MISSING TEXTURE FOR %s FACE %d\n", currQuad.GetName().c_str(), i); }
+					texGroups.push_back(m_rawTextureGroup[rawTexOffset]);
+				}
+				currQuad.SetTextureID(rawOffsetRemap[rawTexOffset], i);
 			}
 		}
 
-		if (!m_animTextures.empty())
+		//texGroups.push_back(defaultTexGroup);
+		offAnimData = currOffset + (sizeof(PSX::TextureGroup) * texGroups.size());
+
+		// Second pass: now offAnimData is known
+		for (auto& [quadFace, animTexOffset] : quadFaceToAnimOffset)
 		{
-			std::vector<std::array<size_t, NUM_FACES_QUADBLOCK>> animOffsetPerQuadblock;
-			for (AnimTexture& animTex : m_animTextures)
+			m_quadblocks[quadFace.first].SetAnimTextureOffset(animTexOffset, offAnimData, quadFace.second);
+		}
+
+		animPtrMapOffsets.push_back(animData.size());
+		size_t offEndAnimData = animData.size();
+		for (size_t i = 0; i < sizeof(uint32_t); i++) { animData.push_back(0); }
+		memcpy(&animData[offEndAnimData], &offAnimData, sizeof(uint32_t));
+	}
+	else
+	{
+		if (UpdateVRM())
+		{
+			for (auto& [material, texture] : m_materialToTexture)
 			{
-				const std::vector<AnimTextureFrame>& animFrames = animTex.GetFrames();
-				const std::vector<Texture>& animTextures = animTex.GetTextures();
-				std::vector<std::vector<size_t>> texgroupIndexesPerFrame(NUM_FACES_QUADBLOCK);
-				bool firstFrame = true;
-				for (const AnimTextureFrame& frame : animFrames)
+				std::vector<size_t>& quadIndexes = m_materialToQuadblocks[material];
+				for (size_t index : quadIndexes)
 				{
-					Texture& texture = const_cast<Texture&>(animTextures[frame.textureIndex]);
+					Quadblock& currQuad = m_quadblocks[index];
+					if (currQuad.GetAnimated()) { continue; }
 					for (size_t i = 0; i < NUM_FACES_QUADBLOCK + 1; i++)
 					{
-						if (i == NUM_FACES_QUADBLOCK && !firstFrame) { continue; }
 						size_t textureID = 0;
-						const QuadUV& uvs = frame.uvs[i];
+						const QuadUV& uvs = currQuad.GetQuadUV(i);
 						PSX::TextureLayout layout = texture.Serialize(uvs);
 						if (savedLayouts.contains(layout)) { textureID = savedLayouts[layout]; }
 						else
@@ -1019,93 +1908,130 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 							texGroup.mosaic = layout;
 							texGroups.push_back(texGroup);
 						}
-						if (firstFrame && i == NUM_FACES_QUADBLOCK)
+						currQuad.SetTextureID(textureID, i);
+					}
+				}
+			}
+
+			if (!m_animTextures.empty())
+			{
+				std::vector<std::array<size_t, NUM_FACES_QUADBLOCK>> animOffsetPerQuadblock;
+				for (AnimTexture& animTex : m_animTextures)
+				{
+					const std::vector<AnimTextureFrame>& animFrames = animTex.GetFrames();
+					const std::vector<Texture>& animTextures = animTex.GetTextures();
+					std::vector<std::vector<size_t>> texgroupIndexesPerFrame(NUM_FACES_QUADBLOCK);
+					bool firstFrame = true;
+					for (const AnimTextureFrame& frame : animFrames)
+					{
+						Texture& texture = const_cast<Texture&>(animTextures[frame.textureIndex]);
+						for (size_t i = 0; i < NUM_FACES_QUADBLOCK + 1; i++)
 						{
-							const std::vector<size_t>& quadblockIndexes = animTex.GetQuadblockIndexes();
-							for (size_t index : quadblockIndexes)
+							if (i == NUM_FACES_QUADBLOCK && !firstFrame) { continue; }
+							size_t textureID = 0;
+							const QuadUV& uvs = frame.uvs[i];
+							PSX::TextureLayout layout = texture.Serialize(uvs);
+							if (savedLayouts.contains(layout)) { textureID = savedLayouts[layout]; }
+							else
 							{
-								m_quadblocks[index].SetTextureID(textureID, i);
+								textureID = texGroups.size();
+								savedLayouts[layout] = textureID;
+
+								PSX::TextureGroup texGroup = {};
+								texGroup.far = layout;
+								texGroup.middle = layout;
+								texGroup.near = layout;
+								texGroup.mosaic = layout;
+								texGroups.push_back(texGroup);
+							}
+							if (firstFrame && i == NUM_FACES_QUADBLOCK)
+							{
+								const std::vector<size_t>& quadblockIndexes = animTex.GetQuadblockIndexes();
+								for (size_t index : quadblockIndexes)
+								{
+									m_quadblocks[index].SetTextureID(textureID, i);
+								}
+							}
+							else { texgroupIndexesPerFrame[i].push_back(textureID); }
+						}
+						firstFrame = false;
+					}
+					std::array<size_t, NUM_FACES_QUADBLOCK> offsetPerQuadblock = {};
+					for (size_t i = 0; i < NUM_FACES_QUADBLOCK; i++)
+					{
+						bool foundEquivalent = false;
+						for (size_t j = 0; j < i; j++)
+						{
+							if (texgroupIndexesPerFrame[i] == texgroupIndexesPerFrame[j])
+							{
+								offsetPerQuadblock[i] = offsetPerQuadblock[j];
+								foundEquivalent = true;
+								break;
 							}
 						}
-						else { texgroupIndexesPerFrame[i].push_back(textureID); }
-					}
-					firstFrame = false;
-				}
-				std::array<size_t, NUM_FACES_QUADBLOCK> offsetPerQuadblock = {};
-				for (size_t i = 0; i < NUM_FACES_QUADBLOCK; i++)
-				{
-					bool foundEquivalent = false;
-					for (size_t j = 0; j < i; j++)
-					{
-						if (texgroupIndexesPerFrame[i] == texgroupIndexesPerFrame[j])
+						if (foundEquivalent) { continue; }
+						std::vector<uint8_t> buffer = animTex.Serialize(texgroupIndexesPerFrame[i][0], offTexture);
+						size_t animTexOffset = animData.size();
+						offsetPerQuadblock[i] = animTexOffset;
+						animPtrMapOffsets.push_back(animTexOffset);
+						for (uint8_t byte : buffer) { animData.push_back(byte); }
+						for (size_t j = 0; j < animFrames.size(); j++)
 						{
-							offsetPerQuadblock[i] = offsetPerQuadblock[j];
-							foundEquivalent = true;
-							break;
+							uint32_t offset = static_cast<uint32_t>((texgroupIndexesPerFrame[i][j] * sizeof(PSX::TextureGroup)) + offTexture);
+							size_t offAnimTexArr = animData.size();
+							animPtrMapOffsets.push_back(offAnimTexArr);
+							for (size_t k = 0; k < sizeof(uint32_t); k++) { animData.push_back(0); }
+							memcpy(&animData[offAnimTexArr], &offset, sizeof(uint32_t));
 						}
 					}
-					if (foundEquivalent) { continue; }
-					std::vector<uint8_t> buffer = animTex.Serialize(texgroupIndexesPerFrame[i][0], offTexture);
-					size_t animTexOffset = animData.size();
-					offsetPerQuadblock[i] = animTexOffset;
-					animPtrMapOffsets.push_back(animTexOffset);
-					for (uint8_t byte : buffer) { animData.push_back(byte); }
-					for (size_t j = 0; j < animFrames.size(); j++)
-					{
-						uint32_t offset = static_cast<uint32_t>((texgroupIndexesPerFrame[i][j] * sizeof(PSX::TextureGroup)) + offTexture);
-						size_t offAnimTexArr = animData.size();
-						animPtrMapOffsets.push_back(offAnimTexArr);
-						for (size_t k = 0; k < sizeof(uint32_t); k++) { animData.push_back(0); }
-						memcpy(&animData[offAnimTexArr], &offset, sizeof(uint32_t));
-					}
+					animOffsetPerQuadblock.push_back(offsetPerQuadblock);
 				}
-				animOffsetPerQuadblock.push_back(offsetPerQuadblock);
-			}
 
-			offAnimData = currOffset + (sizeof(PSX::TextureGroup) * texGroups.size());
-			printf(nameof(offAnimData) " = %zx\n", offAnimData);
+  			offAnimData = currOffset + (sizeof(PSX::TextureGroup) * texGroups.size());
+	  		printf(nameof(offAnimData) " = %zx\n", offAnimData);
 
-			animPtrMapOffsets.push_back(animData.size());
-			size_t offEndAnimData = animData.size();
-			for (size_t i = 0; i < sizeof(uint32_t); i++) { animData.push_back(0); }
-			memcpy(&animData[offEndAnimData], &offAnimData, sizeof(uint32_t));
+				animPtrMapOffsets.push_back(animData.size());
+				size_t offEndAnimData = animData.size();
+				for (size_t i = 0; i < sizeof(uint32_t); i++) { animData.push_back(0); }
+				memcpy(&animData[offEndAnimData], &offAnimData, sizeof(uint32_t));
 
-			for (size_t i = 0; i < m_animTextures.size(); i++)
-			{
-				const std::vector<size_t>& quadblockIndexes = m_animTextures[i].GetQuadblockIndexes();
-				for (size_t index : quadblockIndexes)
+				for (size_t i = 0; i < m_animTextures.size(); i++)
 				{
-					Quadblock& quadblock = m_quadblocks[index];
-					for (size_t j = 0; j < NUM_FACES_QUADBLOCK; j++)
+					const std::vector<size_t>& quadblockIndexes = m_animTextures[i].GetQuadblockIndexes();
+					for (size_t index : quadblockIndexes)
 					{
-						quadblock.SetAnimTextureOffset(animOffsetPerQuadblock[i][j], offAnimData, j);
+						Quadblock& quadblock = m_quadblocks[index];
+						for (size_t j = 0; j < NUM_FACES_QUADBLOCK; j++)
+						{
+							quadblock.SetAnimTextureOffset(animOffsetPerQuadblock[i][j], offAnimData, j);
+						}
 					}
 				}
 			}
+			else
+			{
+				offAnimData = currOffset + (sizeof(PSX::TextureGroup) * texGroups.size());
+				for (size_t i = 0; i < sizeof(uint32_t); i++) { animData.push_back(0); }
+				memcpy(&animData[0], &offAnimData, sizeof(uint32_t));
+				animPtrMapOffsets.push_back(0);
+			}
+
+			m_hotReloadVRMPath = path / (m_name + ".vrm");
+			std::ofstream vrmFile(m_hotReloadVRMPath, std::ios::binary);
+			Write(vrmFile, m_vrm.data(), m_vrm.size());
+			vrmFile.close();
 		}
 		else
 		{
+			texGroups.push_back(defaultTexGroup);
 			offAnimData = currOffset + (sizeof(PSX::TextureGroup) * texGroups.size());
 			printf(nameof(offAnimData) " = %zx\n", offAnimData);
 			for (size_t i = 0; i < sizeof(uint32_t); i++) { animData.push_back(0); }
 			memcpy(&animData[0], &offAnimData, sizeof(uint32_t));
 			animPtrMapOffsets.push_back(0);
 		}
-
-		m_hotReloadVRMPath = path / (m_name + ".vrm");
-		std::ofstream vrmFile(m_hotReloadVRMPath, std::ios::binary);
-		Write(vrmFile, m_vrm.data(), m_vrm.size());
-		vrmFile.close();
 	}
-	else
-	{
-		texGroups.push_back(defaultTexGroup);
-		offAnimData = currOffset + (sizeof(PSX::TextureGroup) * texGroups.size());
-		printf(nameof(offAnimData) " = %zx\n", offAnimData);
-		for (size_t i = 0; i < sizeof(uint32_t); i++) { animData.push_back(0); }
-		memcpy(&animData[0], &offAnimData, sizeof(uint32_t));
-		animPtrMapOffsets.push_back(0);
-	}
+	
 
 	currOffset += (sizeof(PSX::TextureGroup) * texGroups.size()) + animData.size();
 
@@ -1147,6 +2073,8 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 
 	constexpr size_t BITS_PER_SLOT = sizeof(uint32_t) * 8;
 	std::vector<std::tuple<std::vector<uint32_t>, size_t>> visibleNodes;
+	std::vector<std::vector<uint32_t>> uniqueVisNodes;
+	std::map<std::vector<uint32_t>, size_t> visNodesOffsetMap;
 	std::vector<std::tuple<std::vector<uint32_t>, size_t>> visibleQuads;
 	std::vector<std::tuple<std::vector<uint32_t>, size_t>> visibleInstances;
 	size_t visNodeSize = static_cast<size_t>(std::ceil(static_cast<float>(bspNodes.size()) / static_cast<float>(BITS_PER_SLOT)));
@@ -1159,7 +2087,7 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 
 	std::vector<uint32_t> visibleQuadsAll(visQuadSize, 0xFFFFFFFF);
 	size_t quadIndex = 0;
-	const bool validVisTree = m_genVisTree && !m_bspVis.IsEmpty();
+	const bool validVisTree = !m_bspVis.IsEmpty();
 	const std::vector<const BSP*> bspLeaves = m_bsp.GetLeaves();
 	std::unordered_map<size_t, const BSP*> idToLeaf;
 	std::unordered_map<const BSP*, size_t> leafToMatrix;
@@ -1167,7 +2095,7 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 	for (size_t i = 0; i < bspLeaves.size(); i++) { leafToMatrix[bspLeaves[i]] = i; }
 	for (const Quadblock* quad : orderedQuads)
 	{
-		if (quad->GetFlags() & (QuadFlags::INVISIBLE | QuadFlags::INVISIBLE_TRIGGER))
+		if (quad->GetFlags() & QuadFlags::INVISIBLE_TRIGGER)
 		{
 			visibleQuadsAll[quadIndex / BITS_PER_SLOT] &= ~(1 << (quadIndex % BITS_PER_SLOT));
 		}
@@ -1188,15 +2116,25 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 					}
 				}
 			}
-			visibleNodes.push_back({visNodes, currOffset});
-			currOffset += visNodes.size() * sizeof(uint32_t);
+			if (visNodesOffsetMap.contains(visNodes))
+			{
+				visibleNodes.push_back({ visNodes, visNodesOffsetMap.at(visNodes) });
+			}
+			else
+			{
+				visNodesOffsetMap[visNodes] = currOffset;
+				visibleNodes.push_back({ visNodes, currOffset });
+				uniqueVisNodes.push_back(visNodes);
+				currOffset += visNodes.size() * sizeof(uint32_t);
+			}
 		}
 		quadIndex++;
 	}
-
+	printf("visibleNodesOffsetMapSize %d\n", visNodesOffsetMap.size());
 	if (!validVisTree)
 	{
 		visibleNodes.push_back({visibleNodeAll, currOffset});
+		uniqueVisNodes.push_back(visibleNodeAll);
 		currOffset += visibleNodeAll.size() * sizeof(uint32_t);
 	}
 
@@ -1234,7 +2172,7 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 		PSX::Quadblock* serializedQuad = reinterpret_cast<PSX::Quadblock*>(serializedQuads[quadCount].data());
 		serializedQuad->offVisibleSet = static_cast<uint32_t>(offVisibleSet + sizeof(PSX::VisibleSet) * visibleSetIndex);
 	}
-
+	printf("visibleSetsSize %d\n", visibleSets.size());
 	currOffset += visibleSets.size() * sizeof(PSX::VisibleSet);
 
 	const size_t offVertices = currOffset;
@@ -1296,11 +2234,26 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 	currOffset += sizeof(extraHeader);
 
 	constexpr size_t BOT_PATH_COUNT = 3;
-	std::vector<PSX::NavHeader> navHeaders(BOT_PATH_COUNT);
+	PSX::levAINavTable navTable{};
+	std::vector<std::vector<uint8_t>> serializedBotPaths;
 
-	const size_t offNavHeaders = currOffset;
-	printf(nameof(offNavHeaders) " = %zx\n", offNavHeaders);
-	currOffset += navHeaders.size() * sizeof(PSX::NavHeader);
+	const size_t offNavTable = currOffset;
+	currOffset += sizeof(navTable);
+
+	for (int i = 0; i < BOT_PATH_COUNT; i++)
+	{
+		if (m_botPaths[i].IsValid())
+		{
+			navTable.offAIPathArray[i] = currOffset;
+			serializedBotPaths.push_back(m_botPaths[i].Serialize());
+			currOffset += serializedBotPaths.back().size();
+		}
+		else
+		{
+			navTable.offAIPathArray[i] = 0;
+		}
+	}
+
 
 	std::vector<uint32_t> visMemNodesP1(visNodeSize);
 	const size_t offVisMemNodesP1 = currOffset;
@@ -1325,7 +2278,6 @@ bool Level::SaveLEV(const std::filesystem::path& path)
   printf(nameof(offVisMem) " = %zx\n", offVisMem);
 	currOffset += sizeof(visMem);
 
-	// Skybox data serialization
 	size_t offSkyboxData = 0;
 	std::vector<uint8_t> skyboxData;
 	std::vector<size_t> skyboxPtrMapOffsets;
@@ -1354,12 +2306,15 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 		header.skyGradient[i].colorTo = ConvertColor(m_skyGradient[i].colorTo);
 	}
 	header.stars = ConvertStars(m_stars);
+	header.jumpYSpeedCap = static_cast<uint32_t>(m_jumpYSpeedCap);
+	header.splitLines[0] = ConvertFloat(m_splitLines[0], FP_ONE_GEO);
+	header.splitLines[1] = ConvertFloat(m_splitLines[1], FP_ONE_GEO);
 	header.offExtra = static_cast<uint32_t>(offExtraHeader);
 	header.numCheckpointNodes = static_cast<uint32_t>(m_checkpoints.size());
 	header.offCheckpointNodes = static_cast<uint32_t>(offCheckpoints);
 	header.offVisMem = static_cast<uint32_t>(offVisMem);
-	header.offLevNavTable = static_cast<uint32_t>(offNavHeaders);
-
+	header.offLevNavTable = static_cast<uint32_t>(offNavTable);
+	
 	// Set skybox pointer in header if enabled
 	if (m_skybox.IsReady())
 	{
@@ -1625,7 +2580,13 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 		pointerMap.push_back(static_cast<uint32_t>(offset));
 	}
 
-	#undef CALCULATE_OFFSET
+	for (size_t i = 0; i < 3; i++)
+	{
+		if (m_botPaths[i].IsValid())
+			pointerMap.push_back(CALCULATE_OFFSET(PSX::levAINavTable, offAIPathArray[i], offNavTable));
+	}
+  
+  #undef CALCULATE_OFFSET
 
 	const size_t pointerMapBytes = pointerMap.size() * sizeof(uint32_t);
 
@@ -1635,10 +2596,9 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 	Write(file, texGroups.data(), texGroups.size() * sizeof(PSX::TextureGroup));
 	if (!animData.empty()) { Write(file, animData.data(), animData.size()); }
 	for (const std::vector<uint8_t>& serializedQuad : serializedQuads) { Write(file, serializedQuad.data(), serializedQuad.size()); }
-	for (const auto& tuple : visibleNodes)
+	for (const auto& visNode : uniqueVisNodes)
 	{
-		const std::vector<uint32_t>& visibleNode = std::get<0>(tuple);
-		Write(file, visibleNode.data(), visibleNode.size() * sizeof(uint32_t));
+		Write(file, visNode.data(), visNode.size() * sizeof(uint32_t));
 	}
 	for (const auto& tuple : visibleQuads)
 	{
@@ -1657,7 +2617,8 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 	if (!m_tropyGhost.empty()) { Write(file, m_tropyGhost.data(), m_tropyGhost.size()); }
 	if (!m_oxideGhost.empty()) { Write(file, m_oxideGhost.data(), m_oxideGhost.size()); }
 	Write(file, &extraHeader, sizeof(extraHeader));
-	Write(file, navHeaders.data(), navHeaders.size() * sizeof(PSX::NavHeader));
+	Write(file, &navTable, sizeof(navTable));
+	for (const std::vector<uint8_t>& serializedBotPath : serializedBotPaths) { Write(file, serializedBotPath.data(), serializedBotPath.size()); }
 	Write(file, visMemNodesP1.data(), visMemNodesP1.size() * sizeof(uint32_t));
 	Write(file, visMemQuadsP1.data(), visMemQuadsP1.size() * sizeof(uint32_t));
 	Write(file, visMemBSPP1.data(), visMemBSPP1.size() * sizeof(uint32_t));
@@ -1764,7 +2725,7 @@ bool Level::SaveLEV(const std::filesystem::path& path)
 					if (tex.origPalY != origPalY) { continue; }
 
 					// Found matching texture! Update TextureLayout with new coordinates
-					// Internal buffer position → VRAM position: add 512 to X (VRM is placed at VRAM X=512)
+					// Internal buffer position â VRAM position: add 512 to X (VRM is placed at VRAM X=512)
 					size_t vramX = 512 + tex.imageX;
 					size_t vramY = tex.imageY;
 
@@ -1880,6 +2841,8 @@ bool Level::LoadOBJ(const std::filesystem::path& objFile)
 	std::ifstream file(objFile);
 	m_name = objFile.filename().replace_extension().string();
 	m_parentPath = objFile.parent_path();
+
+	m_hasRawTexture = false;
 
 	bool ret = true;
 	std::unordered_map<std::string, std::vector<Tri>> triMap;
@@ -2067,6 +3030,7 @@ bool Level::LoadOBJ(const std::filesystem::path& objFile)
 						m_propTurboPads.SetDefaultValue(material, QuadblockTrigger::NONE);
 						m_propCheckpointPathable.SetDefaultValue(material, true);
 						m_propVisTreeTransparent.SetDefaultValue(material, false);
+						m_propDrawOrderHigh.SetDefaultValue(material, static_cast<int>(0));
 						m_propTerrain.RegisterMaterial(this);
 						m_propQuadFlags.RegisterMaterial(this);
 						m_propDoubleSided.RegisterMaterial(this);
@@ -2075,6 +3039,7 @@ bool Level::LoadOBJ(const std::filesystem::path& objFile)
 						m_propSpeedImpact.RegisterMaterial(this);
 						m_propCheckpointPathable.RegisterMaterial(this);
 						m_propVisTreeTransparent.RegisterMaterial(this);
+						m_propDrawOrderHigh.RegisterMaterial(this);
 					}
 				}
 				bool sameUVs = true;
@@ -2223,6 +3188,246 @@ bool Level::LoadOBJ(const std::filesystem::path& objFile)
 	GenerateBSP();
 	return ret;
 }
+
+
+
+
+
+bool Level::SaveOBJ(const std::filesystem::path& objFile) 
+{
+	std::ofstream file(objFile);
+	if (!file.is_open()) { return false; }
+
+	// --- Collect all unique vertices, normals, UVs across all quadblocks ---
+	std::vector<std::pair<Vec3, Color>> allVertices;
+	std::vector<Vec3> allNormals;
+	std::vector<Vec2> allUVs;
+
+	// Maps for deduplication (using string keys for float precision safety)
+	auto Vec3Key = [](const Vec3& v) {
+		return std::to_string(v.x) + "," + std::to_string(v.y) + "," + std::to_string(v.z);
+		};
+	auto Vec2Key = [](const Vec2& v) {
+		return std::to_string(v.x) + "," + std::to_string(v.y);
+		};
+	auto PointKey = [](const Vec3& pos) {
+		return std::to_string(pos.x) + "," + std::to_string(pos.y) + "," + std::to_string(pos.z);
+		};
+
+	std::unordered_map<std::string, int> vertexIndexMap;  // 1-based
+	std::unordered_map<std::string, int> normalIndexMap;  // 1-based
+	std::unordered_map<std::string, int> uvIndexMap;      // 1-based
+
+	// Per-quadblock face data: each face = list of (vi, uvi, ni) tuples
+	struct FaceVertex { int vi, uvi, ni; };
+	struct FaceData { std::vector<std::vector<FaceVertex>> faces; }; // each face is 3 or 4 verts
+	std::vector<FaceData> quadblockFaces(m_quadblocks.size());
+
+	auto GetOrAddVertex = [&](size_t quadblockIndex, int vertexSlot, const Vec3& pos, const Color& color) -> int {
+		std::string key = std::to_string(quadblockIndex) + ":" + std::to_string(vertexSlot);
+		auto it = vertexIndexMap.find(key);
+		if (it != vertexIndexMap.end()) { return it->second; }
+		int idx = (int)allVertices.size() + 1;
+		allVertices.push_back({ pos, color });
+		vertexIndexMap[key] = idx;
+		return idx;
+		};
+	auto GetOrAddNormal = [&](const Vec3& n) -> int {
+		std::string key = Vec3Key(n);
+		auto it = normalIndexMap.find(key);
+		if (it != normalIndexMap.end()) { return it->second; }
+		int idx = (int)allNormals.size() + 1;
+		allNormals.push_back(n);
+		normalIndexMap[key] = idx;
+		return idx;
+		};
+	auto GetOrAddUV = [&](const Vec2& uv) -> int {
+		// Invert Y back to Blender convention before storing
+		Vec2 blenderUV = { uv.x, 1.0f - uv.y };
+		std::string key = Vec2Key(blenderUV);
+		auto it = uvIndexMap.find(key);
+		if (it != uvIndexMap.end()) { return it->second; }
+		int idx = (int)allUVs.size() + 1;
+		allUVs.push_back(blenderUV);
+		uvIndexMap[key] = idx;
+		return idx;
+		};
+
+	// --- Pass 1: gather all geometry into index buffers ---
+	for (size_t qi = 0; qi < m_quadblocks.size(); qi++)
+	{
+		const Quadblock& qb = m_quadblocks[qi];
+		FaceData& fd = quadblockFaces[qi];
+		const Vertex* verts = qb.GetUnswizzledVertices();
+
+		if (qb.IsQuadblock())
+		{
+			static constexpr int QUAD_FACES[4][4] = {
+	{0, 3, 4, 1}, 
+	{1, 4, 5, 2},
+	{3, 6, 7, 4},
+	{4, 7, 8, 5}
+			};
+			static constexpr int QUAD_UV_REMAP[4] = { 0, 2, 3, 1 }; 
+
+			for (int f = 0; f < 4; f++)
+			{
+				const QuadUV& faceUVs = qb.GetQuadUV(f);
+				std::vector<FaceVertex> face;
+				for (int v = 0; v < 4; v++)
+				{
+					int slot = QUAD_FACES[f][v]; // p0..p8 index
+					const Vertex& vert = verts[slot];
+					face.push_back({
+						GetOrAddVertex(qi, slot, vert.m_pos, vert.GetColor(true)),
+						GetOrAddUV(faceUVs[QUAD_UV_REMAP[v]]),
+						GetOrAddNormal(vert.m_normal)
+						});
+				}
+				fd.faces.push_back(face);
+			}
+		}
+		else // triblock
+		{
+			static constexpr int TRI_FACES[4][3] = {
+	{3, 1, 0},  // tri {0,1,3} reversed
+	{3, 4, 1},  // tri {1,4,3} reversed
+	{4, 2, 1},  // tri {1,2,4} reversed
+	{6, 4, 3}   // tri {3,4,6} reversed
+			};
+
+			// Which quadface UV to source from (same face index as parent quad)
+			static constexpr int TRI_UV_FACE[4] = { 0, 0, 1, 2 };
+
+			static constexpr int TRI_UV_REMAP[4][3] = {
+				{2, 1, 0},  // face 0: correct
+				{2, 3, 1},  // face 1: correct
+				{2, 1, 0},  
+				{2, 1, 0}   
+			};
+
+			for (int f = 0; f < 4; f++)
+			{
+				const QuadUV& faceUVs = qb.GetQuadUV(TRI_UV_FACE[f]);
+				std::vector<FaceVertex> face;
+				for (int v = 0; v < 3; v++)
+				{
+					int slot = TRI_FACES[f][v];
+					const Vertex& vert = verts[slot];
+					face.push_back({
+						GetOrAddVertex(qi, slot, vert.m_pos, vert.GetColor(true)),
+						GetOrAddUV(faceUVs[TRI_UV_REMAP[f][v]]),
+						GetOrAddNormal(vert.m_normal)
+						});
+				}
+				fd.faces.push_back(face);
+			}
+		}
+	}
+
+	// --- Write vertex positions ---
+	file << std::fixed << std::setprecision(6);
+	for (const auto& [pos, c] : allVertices)
+	{
+		file << "v " << pos.x << " " << pos.y << " " << pos.z
+			<< " " << c.Red() << " " << c.Green() << " " << c.Blue() << "\n";
+	}
+	file << "\n";
+
+	// --- Write UVs ---
+	for (const Vec2& uv : allUVs)
+	{
+		file << "vt " << uv.x << " " << uv.y << "\n";
+	}
+	file << "\n";
+
+	// --- Write normals ---
+	for (const Vec3& n : allNormals)
+	{
+		file << "vn " << n.x << " " << n.y << " " << n.z << "\n";
+	}
+	file << "\n";
+
+	// --- Write MTL reference ---
+	std::string stem = objFile.stem().string();
+	bool hasMaterials = !m_materialToTexture.empty();
+	if (hasMaterials)
+	{
+		file << "mtllib " << stem << ".mtl\n\n";
+	}
+
+	// --- Write meshes (one per quadblock) ---
+	for (size_t qi = 0; qi < m_quadblocks.size(); qi++)
+	{
+		const Quadblock& qb = m_quadblocks[qi];
+		const FaceData& fd = quadblockFaces[qi];
+
+		file << "o " << qb.GetName() << "\n";
+
+		// Find this quadblock's material
+		std::string material;
+		for (const auto& [mat, indexes] : m_materialToQuadblocks)
+		{
+			for (size_t idx : indexes)
+			{
+				if (idx == qi) { material = mat; break; }
+			}
+			if (!material.empty()) { break; }
+		}
+
+		if (!material.empty())
+		{
+			file << "usemtl " << material << "\n";
+		}
+
+		file << "s off\n"; // smoothing group, standard Blender export
+
+		for (const std::vector<FaceVertex>& face : fd.faces)
+		{
+			file << "f";
+			for (const FaceVertex& fv : face)
+			{
+				file << " " << fv.vi << "/" << fv.uvi << "/" << fv.ni;
+			}
+			file << "\n";
+		}
+		file << "\n";
+	}
+
+	file.close();
+
+	// --- Write MTL file ---
+	if (hasMaterials)
+	{
+		std::filesystem::path mtlPath = objFile.parent_path() / (stem + ".mtl");
+		std::ofstream mtl(mtlPath);
+		if (mtl.is_open())
+		{
+			for (const auto& [material, texture] : m_materialToTexture)
+			{
+				mtl << "newmtl " << material << "\n";
+				mtl << "Ka 1.000 1.000 1.000\n";
+				mtl << "Kd 1.000 1.000 1.000\n";
+				mtl << "Ks 0.000 0.000 0.000\n";
+				mtl << "illum 1\n";
+
+				const std::filesystem::path& texPath = texture.GetPath();
+				if (!texPath.empty() && std::filesystem::exists(texPath))
+				{
+					mtl << "map_Kd " << texPath.filename().string() << "\n";
+				}
+				mtl << "\n";
+			}
+			mtl.close();
+		}
+	}
+
+	return true;
+}
+
+
+
+
 
 bool Level::StartEmuIPC(const std::string& emulator)
 {
@@ -2438,6 +3643,51 @@ bool Level::UpdateVRM()
 	return true;
 }
 
+std::vector<uint16_t> Level::ReadRawVRAM(std::filesystem::path vrmPath)
+{
+	std::vector<uint16_t> vram(1024 * 512, 0); 
+
+	if (std::filesystem::exists(vrmPath))
+	{
+		std::ifstream vrmFile(vrmPath, std::ios::binary);
+
+		// Read the raw file into temporary memory
+		vrmFile.seekg(0, std::ios::end);
+		size_t vrmSize = vrmFile.tellg();
+		vrmFile.seekg(0, std::ios::beg);
+
+		std::vector<uint8_t> rawVrmData(vrmSize);
+		vrmFile.read(reinterpret_cast<char*>(rawVrmData.data()), vrmSize);
+		vrmFile.close();
+
+		const uint8_t* pVrm = rawVrmData.data();
+		uint32_t vrmMagic;
+		memcpy(&vrmMagic, pVrm, sizeof(uint32_t));
+		pVrm += sizeof(uint32_t);
+
+		// If magic is 0x20, we have a multi-block VRM (Standard for this level format)
+		if (vrmMagic == 0x20) {
+			for (int block = 0; block < 2; block++) {
+				PSX::VRMHeader blockHead;
+				memcpy(&blockHead, pVrm, sizeof(PSX::VRMHeader));
+				pVrm += sizeof(PSX::VRMHeader);
+
+				for (size_t y = 0; y < blockHead.height; y++) {
+					// Use the absolute coordinates provided in the VRM header
+					size_t vramIdx = (blockHead.y + y) * 1024 + blockHead.x;
+					size_t rowByteSize = blockHead.width * sizeof(uint16_t);
+
+					if (vramIdx + blockHead.width <= vram.size()) {
+						memcpy(&vram[vramIdx], pVrm, rowByteSize);
+					}
+					pVrm += rowByteSize;
+				}
+			}
+		}
+	}
+	return vram;
+}
+
 bool Level::UpdateAnimTextures(float deltaTime)
 {
 	bool changed = false;
@@ -2479,6 +3729,9 @@ void Level::InitModels(Renderer& renderer)
 
 	m_models[LevelModels::SKYBOX] = m_models[LevelModels::LEVEL]->AddModel();
 	m_models[LevelModels::SKYBOX]->SetRenderCondition([]() { return GuiRenderSettings::showSkybox; });
+
+	m_models[LevelModels::BOT] = m_models[LevelModels::LEVEL]->AddModel();
+	m_models[LevelModels::BOT]->SetRenderCondition([]() { return GuiRenderSettings::showBots; });
 }
 
 void Level::GenerateRenderLevData()
@@ -2648,6 +3901,67 @@ void Level::UpdateRenderCheckpointData()
 	checkpointModel->GetMesh().SetGeometry(checkTriangles, Mesh::RenderFlags::DrawBackfaces | Mesh::RenderFlags::DontOverrideRenderFlags);
 }
 
+
+void Level::UpdateRenderBotData()
+{
+	Model* botModel = m_models[LevelModels::BOT];
+	if (!botModel) { return; }
+	botModel->ClearModels();
+
+	// Check if any path has nodes at all
+	bool anyNodes = false;
+	for (const BotPath& path : m_botPaths)
+		if (path.GetNodeCount() > 0) { anyNodes = true; break; }
+
+	if (!anyNodes)
+	{
+		botModel->GetMesh().Clear();
+		return;
+	}
+
+	// One fixed color per path (left, middle, right)
+	static const Color pathColors[3] =
+	{
+		Color(0.86f, 0.31f, 0.31f), // left   red
+		Color(0.31f, 0.78f, 0.31f), // mid    green
+		Color(0.31f, 0.51f, 0.86f), // right  blue
+	};
+
+	constexpr float labelHeightOffset = 1.5f;
+	std::vector<Primitive> botTriangles;
+
+	for (int pathIndex = 0; pathIndex < 3; pathIndex++)
+	{
+		const BotPath& path = m_botPaths[pathIndex];
+		const Color& c = pathColors[pathIndex % 3];
+
+		for (size_t nodeIndex = 0; nodeIndex < path.GetNodeCount(); nodeIndex++)
+		{
+			const BotNode& node = path.GetNode(nodeIndex);
+			const Vec3& pos = node.GetPos();
+
+			Vertex v = Vertex(Point(pos.x, pos.y, pos.z, c.r, c.g, c.b));
+			const std::vector<Primitive> tris = v.ToGeometry();
+			botTriangles.insert(botTriangles.end(), tris.begin(), tris.end());
+
+			Model* label = botModel->AddModel();
+			label->GetMesh().SetGeometry(
+				std::to_string(nodeIndex),
+				Text3D::Align::CENTER,
+				Color(c.r, c.g, c.b, 255u)
+			);
+			Vec3 labelPos = pos;
+			labelPos.y += labelHeightOffset;
+			label->SetPosition(labelPos);
+		}
+	}
+
+	botModel->GetMesh().SetGeometry(
+		botTriangles,
+		Mesh::RenderFlags::DrawBackfaces | Mesh::RenderFlags::DontOverrideRenderFlags
+	);
+}
+
 void Level::GenerateRenderStartpointData()
 {
 	if (!m_models[LevelModels::SPAWN]) { return; }
@@ -2717,7 +4031,7 @@ void Level::GenerateRenderSelectedBlockData(const Quadblock& quadblock, const Ve
 		for (size_t bsp_index = 0; bsp_index < bspLeaves.size(); bsp_index++)
 		{
 			const BSP& bsp = *bspLeaves[bsp_index];
-			if (m_bspVis.Get(bsp_index, myBSPIndex))
+			if (m_bspVis.Get(myBSPIndex, bsp_index))
 			{
 				const std::vector<size_t> qbIndeces = bsp.GetQuadblockIndexes();
 				for (size_t qbInd : qbIndeces)

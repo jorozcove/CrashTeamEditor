@@ -19,9 +19,9 @@ static constexpr size_t RENDER_INDEX_NONE = std::numeric_limits<size_t>::max();
 
 struct QuadFlags
 {
-	static constexpr uint16_t INVISIBLE = 1 << 0;
+	static constexpr uint16_t REFLECTION_2 = 1 << 0;
 	static constexpr uint16_t MOON_GRAVITY = 1 << 1;
-	static constexpr uint16_t REFLECTION = 1 << 2;
+	static constexpr uint16_t REFLECTION_1 = 1 << 2;
 	static constexpr uint16_t KICKERS = 1 << 3;
 	static constexpr uint16_t OUT_OF_BOUNDS = 1 << 4;
 	static constexpr uint16_t NEVER_USED = 1 << 5;
@@ -37,11 +37,11 @@ struct QuadFlags
 	static constexpr uint16_t INVISIBLE_TRIGGER = 1 << 15;
 	static constexpr uint16_t DEFAULT = GROUND | COLLISION_TRIGGER;
 	static inline const std::unordered_map<std::string, uint16_t> LABELS = {
-		{"Invisible", INVISIBLE}, {"Moon Gravity", MOON_GRAVITY}, {"Reflection", REFLECTION},
+		{"Reflection 2", REFLECTION_2}, {"Moon Gravity", MOON_GRAVITY}, {"Reflection 1", REFLECTION_1},
 		{"Kickers (?)", KICKERS}, {"Out of Bounds", OUT_OF_BOUNDS}, {"Never Used (?)", NEVER_USED},
 		{"Trigger Script", TRIGGER_SCRIPT }, {"Reverb", REVERB}, {"Kickers Two (?)", KICKERS_TWO},
 		{"Mask Grab", MASK_GRAB }, {"Tiger Temple Door", TIGER_TEMPLE_DOOR}, {"Collision Trigger", COLLISION_TRIGGER},
-		{"Ground", GROUND}, {"Wall", WALL}, {"No Colision", NO_COLLISION}, {"Invisible Trigger", INVISIBLE_TRIGGER}
+		{"Ground", GROUND}, {"Wall", WALL}, {"No Collision", NO_COLLISION}, {"Invisible Trigger", INVISIBLE_TRIGGER}
 	};
 };
 
@@ -117,6 +117,7 @@ public:
 	const std::string& GetName() const;
 	Vec3 GetCenter() const;
 	Vec3 GetNormal() const;
+	const std::vector<std::array<size_t, 3>>& GetCollTriFacesIndexes() const;
 	std::vector<std::array<size_t, 3>> GetTriFacesIndexes() const;
 	std::array<Vec3, 3> GetTriFace(size_t id0, size_t id1, size_t id2) const;
 	uint8_t GetTerrain() const;
@@ -133,9 +134,11 @@ public:
 	bool GetCheckpointStatus() const;
 	bool GetCheckpointPathable() const;
 	bool GetVisTreeTransparent() const;
+	int GetDrawOrderHigh() const;
 	const QuadUV& GetQuadUV(size_t quad) const;
 	const std::filesystem::path& GetTexPath() const;
 	const std::array<QuadUV, NUM_FACES_QUADBLOCK + 1>& GetUVs() const;
+	uint32_t GetRawTexOffset(size_t i) const;
 	size_t GetRenderPrimitiveIndex() const;
 	const std::string& GetMaterial() const;
 	void SetRenderPrimitiveIndex(size_t triangleIndex);
@@ -147,6 +150,7 @@ public:
 	void SetCheckpointStatus(bool active);
 	void SetCheckpointPathable(bool pathable);
 	void SetVisTreeTransparent(bool transparent);
+	void SetDrawOrderHigh(int drawOrderHigh);
 	void SetName(const std::string& name);
 	void SetTurboPadIndex(size_t index);
 	void SetHide(bool active);
@@ -159,6 +163,9 @@ public:
 	void SetFilter(bool filter);
 	void SetFilterColor(const Color& color);
 	void SetSpeedImpact(int speed);
+	void SetUVs(const QuadUV& uvs);
+	void SetFaceUVs(size_t faceIndex, const QuadUV& uvs);
+	void SetMaterial(const std::string& material);
 	void Translate(float ratio, const Vec3& direction);
 	const BoundingBox& GetBoundingBox() const;
 	std::vector<Primitive> ToGeometry(bool filterTriangles = false, const std::array<QuadUV, NUM_FACES_QUADBLOCK + 1>* overrideUvs = nullptr, const std::filesystem::path* overrideTexturePath = nullptr) const;
@@ -189,6 +196,7 @@ private:
 	bool m_checkpointPathable;
 	bool m_checkpointStatus;
 	bool m_visTreeTransparent;
+	int m_drawOrderHigh;
 	bool m_hide;
 	Vertex m_p[NUM_VERTICES_QUADBLOCK];
 	BoundingBox m_bbox;
@@ -205,10 +213,16 @@ private:
 	size_t m_turboPadIndex;
 	Color m_filterColor;
 	mutable size_t m_bspID;
+	std::vector<std::array<size_t, 3>> m_collTriFaces;
 	std::array<QuadUV, NUM_FACES_QUADBLOCK + 1> m_uvs; /* Last id is reserved for low tex */
 	std::array<size_t, NUM_FACES_QUADBLOCK + 1> m_textureIDs = { 0, 0, 0, 0, 0 };
 	std::array<size_t, NUM_FACES_QUADBLOCK + 1> m_animTexOffset = {0, 0, 0, 0, 0};
 	std::filesystem::path m_texPath;
+	bool m_hasRawNormalData; //for raw normals
+	uint8_t m_triNormalVecBitshift;
+	int16_t m_triNormalVecDividend[10];
+	bool m_hasRawTexture;
+	uint32_t m_offTextures[NUM_FACES_QUADBLOCK + 1];
 	size_t m_renderPrimitiveIndex = RENDER_INDEX_NONE;
 	UpdateFilterCallback m_filterCallback;
 };

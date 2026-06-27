@@ -9,6 +9,9 @@ BSP::BSP()
 {
 	m_parent = nullptr;
 	m_id = g_id++;
+	m_idFlag = 0;
+	m_leftFlag = 0;
+	m_rightFlag = 0;
 	m_node = BSPNode::BRANCH;
 	m_axis = AxisSplit::NONE;
 	m_flags = BSPFlags::NONE;
@@ -23,6 +26,9 @@ BSP::BSP(BSPNode type, const std::vector<size_t>& quadblockIndexes, BSP* parent,
 	bool isLeaf = type == BSPNode::LEAF;
 	m_parent = parent;
 	m_id = g_id++;
+	m_idFlag = 0;
+	m_leftFlag = 0;
+	m_rightFlag = 0;
 	m_node = type;
 	m_axis = AxisSplit::NONE;
 	m_flags = isLeaf ? BSPFlags::LEAF : BSPFlags::NONE;
@@ -48,20 +54,22 @@ void BSP::PopulateBranch(PSX::BSPBranch& branch, std::vector<BSP*>& bspArray, si
 	m_flags = branch.flag;
 	if (branch.leftChild != BSPID::EMPTY)
 	{
-		uint16_t leftId = branch.leftChild & ~BSPID::LEAF;
+		uint16_t leftId = branch.leftChild & (BSPID::LEAF-1);
 		if (leftId < bspArray.size())
 		{
 			m_left = bspArray[leftId];
 			m_left->SetParent(this);
+			m_leftFlag = branch.leftChild - leftId;
 		}
 	}
 	if (branch.rightChild != BSPID::EMPTY)
 	{
-		uint16_t rightId = branch.rightChild & ~BSPID::LEAF;
+		uint16_t rightId = branch.rightChild & (BSPID::LEAF - 1);
 		if (rightId < bspArray.size())
 		{
 			m_right = bspArray[rightId];
 			m_right->SetParent(this);
+			m_rightFlag = branch.rightChild - rightId;
 		}
 	}
 	m_bbox = BoundingBox();
@@ -248,6 +256,56 @@ void BSP::Clear()
 	g_id = 1;
 }
 
+void BSP::SplitLeaf(const std::vector<Quadblock>& quadblocks, const AxisSplit axis, const float midpoint)
+{
+	// Split a leaf using axis and midpoint.
+	// Do nothing if it's a branch, or the midpoint doesn't split into 2 non empty leaves.
+	if (IsBranch()) { return; } 
+
+	std::vector<size_t> left_quad_indexes;
+	std::vector<size_t> right_quad_indexes;
+	for (size_t quad_index : m_quadblockIndexes)
+	{
+		const Quadblock& quad = quadblocks[quad_index];
+		float centerValue = 0.0f;
+		switch (axis)
+		{
+		case AxisSplit::X:
+			centerValue = quad.GetCenter().x;
+			break;
+		case AxisSplit::Y:
+			centerValue = quad.GetCenter().y;
+			break;
+		case AxisSplit::Z:
+			centerValue = quad.GetCenter().z;
+			break;
+		default:
+			return; // Invalid axis
+		}
+
+		if (centerValue >= midpoint)
+		{
+			left_quad_indexes.push_back(quad_index);
+		}
+		else
+		{
+			right_quad_indexes.push_back(quad_index);
+		}
+	}
+
+	if (left_quad_indexes.empty() || right_quad_indexes.empty()) { return;}
+
+	m_node = BSPNode::BRANCH;
+	m_flags &= ~BSPFlags::LEAF;
+	m_axis = axis;
+
+	m_left = new BSP(BSPNode::LEAF, left_quad_indexes, this, quadblocks);
+	m_left->m_bbox = ComputeBoundingBox(quadblocks, left_quad_indexes);
+	
+	m_right = new BSP(BSPNode::LEAF, right_quad_indexes, this, quadblocks);
+	m_right->m_bbox = ComputeBoundingBox(quadblocks, right_quad_indexes);
+}
+
 void BSP::Generate(const std::vector<Quadblock>& quadblocks, const size_t maxQuadsPerLeaf, const float maxAxisLength)
 {
 	m_bbox = ComputeBoundingBox(quadblocks, m_quadblockIndexes);
@@ -389,14 +447,14 @@ std::vector<uint8_t> BSP::SerializeBranch() const
 	}
 	if (m_left)
 	{
-		branch.leftChild = static_cast<uint16_t>(m_left->m_id);
-		if (!m_left->IsBranch()) { branch.leftChild |= BSPID::LEAF; }
+		branch.leftChild = static_cast<uint16_t>(m_left->m_id) + static_cast<uint16_t>(m_leftFlag);
+		if (!m_left->IsBranch() && m_leftFlag == 0) { branch.leftChild |= BSPID::LEAF; }
 	}
 	else { branch.leftChild = BSPID::EMPTY; }
 	if (m_right)
 	{
-		branch.rightChild = static_cast<uint16_t>(m_right->m_id);
-		if (!m_right->IsBranch()) { branch.rightChild |= BSPID::LEAF; }
+		branch.rightChild = static_cast<uint16_t>(m_right->m_id) + static_cast<uint16_t>(m_rightFlag);
+		if (!m_right->IsBranch() && m_rightFlag == 0) { branch.rightChild |= BSPID::LEAF; }
 	}
 	else { branch.rightChild = BSPID::EMPTY; }
 	branch.unk1 = 0x00;

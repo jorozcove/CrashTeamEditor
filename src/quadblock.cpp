@@ -27,7 +27,7 @@ Quadblock::Quadblock(const std::string& name, Tri& t0, Tri& t1, Tri& t2, Tri& t3
 	{
 		throw QuadException(
 			("Unique Vertices: " + std::to_string(uniqueCount) + "/3\n" +
-			 "Shared Vertices: " + std::to_string(sharedCount) + "/3\n")
+				"Shared Vertices: " + std::to_string(sharedCount) + "/3\n")
 		);
 	}
 
@@ -193,11 +193,11 @@ Quadblock::Quadblock(const std::string& name, Tri& t0, Tri& t1, Tri& t2, Tri& t3
 		const Tri* uvt1 = FindTri(m_p[2].m_pos, t0, t1, t2, t3);
 		const Tri* uvt2 = FindTri(m_p[6].m_pos, t0, t1, t2, t3);
 
-		m_uvs[0] = { GetUV(m_p[0].m_pos, *uvt0), GetUV(m_p[1].m_pos, *uvt0), GetUV(m_p[3].m_pos, *uvt0), GetUV(m_p[4].m_pos, *centerTri) };
-		m_uvs[1] = { GetUV(m_p[1].m_pos, *uvt1), GetUV(m_p[2].m_pos, *uvt1), GetUV(m_p[4].m_pos, *uvt1), Vec2() };
-		m_uvs[2] = { GetUV(m_p[3].m_pos, *uvt2), GetUV(m_p[4].m_pos, *uvt2), GetUV(m_p[6].m_pos, *uvt2), Vec2() };
-		m_uvs[3] = { Vec2(), Vec2(), Vec2(), Vec2() };
-		m_uvs[4] = { GetUV(m_p[0].m_pos, *uvt0), GetUV(m_p[2].m_pos, *uvt1), GetUV(m_p[6].m_pos, *uvt2), Vec2() };
+		m_uvs[0] = {GetUV(m_p[0].m_pos, *uvt0), GetUV(m_p[1].m_pos, *uvt0), GetUV(m_p[3].m_pos, *uvt0), GetUV(m_p[4].m_pos, *centerTri)};
+		m_uvs[1] = {GetUV(m_p[1].m_pos, *uvt1), GetUV(m_p[2].m_pos, *uvt1), GetUV(m_p[4].m_pos, *uvt1), Vec2()};
+		m_uvs[2] = {GetUV(m_p[3].m_pos, *uvt2), GetUV(m_p[4].m_pos, *uvt2), GetUV(m_p[6].m_pos, *uvt2), Vec2()};
+		m_uvs[3] = {Vec2(), Vec2(), Vec2(), Vec2()};
+		m_uvs[4] = {GetUV(m_p[0].m_pos, *uvt0), GetUV(m_p[2].m_pos, *uvt1), GetUV(m_p[6].m_pos, *uvt2), Vec2()};
 	}
 	else { ResetUVs(); }
 
@@ -233,8 +233,8 @@ Quadblock::Quadblock(const std::string& name, Quad& q0, Quad& q1, Quad& q2, Quad
 	{
 		throw QuadException(
 			("Unique Vertices: " + std::to_string(uniqueCount) + "/4\n" +
-			"Shared Vertices: " + std::to_string(sharedCount) + "/4\n" +
-			"Center Vertices: " + std::to_string(centerCount) + "/1\n")
+				"Shared Vertices: " + std::to_string(sharedCount) + "/4\n" +
+				"Center Vertices: " + std::to_string(centerCount) + "/1\n")
 		);
 	}
 
@@ -306,7 +306,7 @@ Quadblock::Quadblock(const std::string& name, Quad& q0, Quad& q1, Quad& q2, Quad
 
 	auto FindQuad = [](const Vec3& pos, const Quad& q0, const Quad& q1, const Quad& q2, const Quad& q3) -> const Quad*
 		{
-			const Quad* quads[] = { &q0, &q1, &q2, &q3 };
+			const Quad* quads[] = {&q0, &q1, &q2, &q3};
 			for (size_t i = 0; i < 4; i++)
 			{
 				const Quad* quad = quads[i];
@@ -334,10 +334,10 @@ Quadblock::Quadblock(const std::string& name, Quad& q0, Quad& q1, Quad& q2, Quad
 
 	if (hasUV)
 	{
-		m_uvs[0] = { GetUV(m_p[0].m_pos, *uvq0), GetUV(m_p[1].m_pos, *uvq0), GetUV(m_p[3].m_pos, *uvq0), GetUV(m_p[4].m_pos, *uvq0) };
-		m_uvs[1] = { GetUV(m_p[1].m_pos, *uvq1), GetUV(m_p[2].m_pos, *uvq1), GetUV(m_p[4].m_pos, *uvq1), GetUV(m_p[5].m_pos, *uvq1) };
-		m_uvs[2] = { GetUV(m_p[3].m_pos, *uvq2), GetUV(m_p[4].m_pos, *uvq2), GetUV(m_p[6].m_pos, *uvq2), GetUV(m_p[7].m_pos, *uvq2) };
-		m_uvs[3] = { GetUV(m_p[4].m_pos, *uvq3), GetUV(m_p[5].m_pos, *uvq3), GetUV(m_p[7].m_pos, *uvq3), GetUV(m_p[8].m_pos, *uvq3) };
+		m_uvs[0] = {GetUV(m_p[0].m_pos, *uvq0), GetUV(m_p[1].m_pos, *uvq0), GetUV(m_p[3].m_pos, *uvq0), GetUV(m_p[4].m_pos, *uvq0)};
+		m_uvs[1] = {GetUV(m_p[1].m_pos, *uvq1), GetUV(m_p[2].m_pos, *uvq1), GetUV(m_p[4].m_pos, *uvq1), GetUV(m_p[5].m_pos, *uvq1)};
+		m_uvs[2] = {GetUV(m_p[3].m_pos, *uvq2), GetUV(m_p[4].m_pos, *uvq2), GetUV(m_p[6].m_pos, *uvq2), GetUV(m_p[7].m_pos, *uvq2)};
+		m_uvs[3] = {GetUV(m_p[4].m_pos, *uvq3), GetUV(m_p[5].m_pos, *uvq3), GetUV(m_p[7].m_pos, *uvq3), GetUV(m_p[8].m_pos, *uvq3)};
 
 		float uMin = std::numeric_limits<float>::max(); float vMin = std::numeric_limits<float>::max();
 		float uMax = -std::numeric_limits<float>::max(); float vMax = -std::numeric_limits<float>::max();
@@ -352,7 +352,7 @@ Quadblock::Quadblock(const std::string& name, Quad& q0, Quad& q1, Quad& q2, Quad
 
 		bool indexPicked[4] = {false, false, false, false};
 		bool boundPicked[4] = {false, false, false, false};
-		const QuadUV uvBounds = { Vec2(uMin, vMin), Vec2(uMax, vMin), Vec2(uMin, vMax), Vec2(uMax, vMax)};
+		const QuadUV uvBounds = {Vec2(uMin, vMin), Vec2(uMax, vMin), Vec2(uMin, vMax), Vec2(uMax, vMax)};
 
 		for (size_t indexCount = 0; indexCount < 4; indexCount++)
 		{
@@ -390,14 +390,20 @@ Quadblock::Quadblock(const std::string& name, Quad& q0, Quad& q1, Quad& q2, Quad
 
 Quadblock::Quadblock(const PSX::Quadblock& quadblock, const std::vector<PSX::Vertex>& vertices, UpdateFilterCallback filterCallback)
 {
-	uint16_t reverseIndexMapping[NUM_VERTICES_QUADBLOCK] = { 0, 2, 6, 8, 1, 3, 4, 5, 7 };
+	uint16_t reverseIndexMapping[NUM_VERTICES_QUADBLOCK] = {0, 2, 6, 8, 1, 3, 4, 5, 7};
+	std::unordered_set<uint16_t> indexes;
 	for (size_t i = 0; i < NUM_VERTICES_QUADBLOCK; i++)
 	{
 		uint16_t index = quadblock.index[i];
+		indexes.insert(index);
 		const PSX::Vertex& vertex = vertices[index];
 		m_p[reverseIndexMapping[i]] = Vertex(vertex);
 	}
 	SetDefaultValues();
+	m_hasRawNormalData = true;
+	m_hasRawTexture = true;
+	m_triNormalVecBitshift = quadblock.triNormalVecBitshift;
+	for (int i = 0; i < 10; i++) { m_triNormalVecDividend[i] = quadblock.triNormalVecDividend[i]; }
 	m_bbox.max = ConvertPSXVec3(quadblock.bbox.max, FP_ONE_GEO);
 	m_bbox.min = ConvertPSXVec3(quadblock.bbox.min, FP_ONE_GEO);
 
@@ -409,14 +415,19 @@ Quadblock::Quadblock(const PSX::Quadblock& quadblock, const std::vector<PSX::Ver
 		uint32_t packedFace = (quadblock.drawOrderLow >> (8 + i * 5)) & 0b11111;
 		m_faceRotateFlip[i] = packedFace & 0b111;
 		m_faceDrawMode[i] = (packedFace >> 3) & 0b11;
+		if (quadblock.drawOrderHigh[i] != 0) { m_drawOrderHigh = static_cast<int>(quadblock.drawOrderHigh[i]); }
+		m_offTextures[i] = quadblock.offMidTextures[i];
 	}
+	m_offTextures[NUM_FACES_QUADBLOCK] = quadblock.offLowTexture;
 	m_terrain = quadblock.terrain;
+	m_downforce = static_cast<int>(quadblock.speedImpact);
 	m_checkpointIndex = quadblock.checkpointIndex;
 	if (m_checkpointIndex == std::numeric_limits<uint8_t>::max()) { m_checkpointIndex = -1; }
 	else { m_checkpointStatus = true; }
 	m_material = "default";
-	m_triblock = false;
+	m_triblock = indexes.size() == 6;
 	m_filterCallback = filterCallback;
+		
 }
 
 const std::string& Quadblock::GetName() const
@@ -449,6 +460,11 @@ Vec3 Quadblock::GetNormal() const
 	Vec3 normal = ComputeNormalVector(0, 2, 6);
 	normal.Normalize();
 	return normal;
+}
+
+const std::vector<std::array<size_t, 3>>& Quadblock::GetCollTriFacesIndexes() const
+{
+	return m_collTriFaces;
 }
 
 std::vector<std::array<size_t, 3>> Quadblock::GetTriFacesIndexes() const
@@ -561,6 +577,11 @@ bool Quadblock::GetVisTreeTransparent() const
 	return m_visTreeTransparent;
 }
 
+int Quadblock::GetDrawOrderHigh() const
+{
+	return m_drawOrderHigh;
+}
+
 const QuadUV& Quadblock::GetQuadUV(size_t quad) const
 {
 	return m_uvs[quad];
@@ -574,6 +595,11 @@ const std::filesystem::path& Quadblock::GetTexPath() const
 const std::array<QuadUV, NUM_FACES_QUADBLOCK + 1>& Quadblock::GetUVs() const
 {
 	return m_uvs;
+}
+
+uint32_t Quadblock::GetRawTexOffset(size_t i) const
+{
+	return m_offTextures[i];
 }
 
 size_t Quadblock::GetRenderPrimitiveIndex() const
@@ -631,6 +657,11 @@ void Quadblock::SetVisTreeTransparent(bool transparent)
 	m_visTreeTransparent = transparent;
 }
 
+void Quadblock::SetDrawOrderHigh(int drawOrderHigh)
+{
+	m_drawOrderHigh = drawOrderHigh;
+}
+
 void Quadblock::SetName(const std::string& name)
 {
 	m_name = name;
@@ -686,6 +717,27 @@ void Quadblock::SetFilterColor(const Color& color)
 void Quadblock::SetSpeedImpact(int speed)
 {
 	m_downforce = speed;
+}
+
+void Quadblock::SetUVs(const QuadUV& uvs)
+{
+	for (size_t i = 0; i < NUM_FACES_QUADBLOCK + 1; i++)
+	{
+		m_uvs[i] = uvs;
+	}
+}
+
+void Quadblock::SetFaceUVs(size_t faceIndex, const QuadUV& uvs)
+{
+	if (faceIndex < m_uvs.size())
+	{
+		m_uvs[faceIndex] = uvs;
+	}
+}
+
+void Quadblock::SetMaterial(const std::string& material) 
+{ 
+	m_material = material; 
 }
 
 void Quadblock::Translate(float ratio, const Vec3& direction)
@@ -760,7 +812,7 @@ std::vector<Primitive> Quadblock::ToGeometry(bool filterTriangles, const std::ar
 			{ 3, 4, 6 },
 			{ 1, 4, 3 },
 		};
-		constexpr int triblockQuadIndex[triCount] = { 0, 1, 2, 0 };
+		constexpr int triblockQuadIndex[triCount] = {0, 1, 2, 0};
 		for (int triIndex = 0; triIndex < triCount; triIndex++)
 		{
 			const int quadIndex = triblockQuadIndex[triIndex];
@@ -787,7 +839,7 @@ std::vector<Primitive> Quadblock::ToGeometry(bool filterTriangles, const std::ar
 std::vector<Vertex> Quadblock::GetVertices() const
 {
 	/*                                 0       1       2       3       4       5       6       7       8    */
-	std::vector<Vertex> vertices = { m_p[0], m_p[2], m_p[6], m_p[8], m_p[1], m_p[3], m_p[4], m_p[5], m_p[7] };
+	std::vector<Vertex> vertices = {m_p[0], m_p[2], m_p[6], m_p[8], m_p[1], m_p[3], m_p[4], m_p[5], m_p[7]};
 	return vertices;
 }
 
@@ -837,8 +889,8 @@ std::vector<uint8_t> Quadblock::Serialize(size_t id, size_t offTextures, const s
 	{
 		uint32_t packedFace = m_faceRotateFlip[i] | (m_faceDrawMode[i] << 3);
 		quadblock.drawOrderLow |= packedFace << (8 + i * 5);
+		quadblock.drawOrderHigh[i] = static_cast<int8_t>(m_drawOrderHigh);
 	}
-	quadblock.drawOrderHigh = 0;
 	if (m_animated)
 	{
 		quadblock.offMidTextures[0] = static_cast<uint32_t>(m_animTexOffset[0] | 1);
@@ -864,24 +916,33 @@ std::vector<uint8_t> Quadblock::Serialize(size_t id, size_t offTextures, const s
 	const size_t idVis = id / 32;
 	quadblock.id = static_cast<uint16_t>((32 * idVis) + (31 - (id % 32)));
 	quadblock.checkpointIndex = static_cast<uint8_t>(m_checkpointIndex);
-	quadblock.triNormalVecBitshift = static_cast<uint8_t>(std::round(std::log2(std::max(ComputeNormalVector(0, 2, 6).Length(), ComputeNormalVector(2, 8, 6).Length()) * 512.0f)));
 
-	auto CalculateNormalDividend = [this](size_t id0, size_t id1, size_t id2, float scaler) -> int16_t
-		{
-			return static_cast<int16_t>(std::round(scaler / ComputeNormalVector(id0, id1, id2).Length()));
-		};
+	if (!m_hasRawNormalData)
+	{
+		quadblock.triNormalVecBitshift = static_cast<uint8_t>(std::round(std::log2(std::max(ComputeNormalVector(0, 2, 6).Length(), ComputeNormalVector(2, 8, 6).Length()) * 512.0f)));
+		auto CalculateNormalDividend = [this](size_t id0, size_t id1, size_t id2, float scaler) -> int16_t
+			{
+				return static_cast<int16_t>(std::round(scaler / ComputeNormalVector(id0, id1, id2).Length()));
+			};
 
-	float scaler = static_cast<float>(1 << quadblock.triNormalVecBitshift);
-	quadblock.triNormalVecDividend[0] = CalculateNormalDividend(0, 1, 3, scaler);
-	quadblock.triNormalVecDividend[1] = CalculateNormalDividend(1, 4, 3, scaler);
-	quadblock.triNormalVecDividend[2] = CalculateNormalDividend(4, 1, 2, scaler);
-	quadblock.triNormalVecDividend[3] = CalculateNormalDividend(3, 4, 6, scaler);
-	quadblock.triNormalVecDividend[4] = CalculateNormalDividend(7, 4, 5, scaler);
-	quadblock.triNormalVecDividend[5] = CalculateNormalDividend(5, 8, 7, scaler);
-	quadblock.triNormalVecDividend[6] = CalculateNormalDividend(2, 5, 4, scaler);
-	quadblock.triNormalVecDividend[7] = CalculateNormalDividend(6, 4, 7, scaler);
-	quadblock.triNormalVecDividend[9] = CalculateNormalDividend(2, 8, 6, scaler); /* low LoD */
-	quadblock.triNormalVecDividend[8] = CalculateNormalDividend(0, 2, 6, scaler); /* low LoD */
+		float scaler = static_cast<float>(1 << quadblock.triNormalVecBitshift);
+		quadblock.triNormalVecDividend[0] = CalculateNormalDividend(0, 1, 3, scaler);
+		quadblock.triNormalVecDividend[1] = CalculateNormalDividend(1, 4, 3, scaler);
+		quadblock.triNormalVecDividend[2] = CalculateNormalDividend(4, 1, 2, scaler);
+		quadblock.triNormalVecDividend[3] = CalculateNormalDividend(3, 4, 6, scaler);
+		quadblock.triNormalVecDividend[4] = CalculateNormalDividend(7, 4, 5, scaler);
+		quadblock.triNormalVecDividend[5] = CalculateNormalDividend(5, 8, 7, scaler);
+		quadblock.triNormalVecDividend[6] = CalculateNormalDividend(2, 5, 4, scaler);
+		quadblock.triNormalVecDividend[7] = CalculateNormalDividend(6, 4, 7, scaler);
+		quadblock.triNormalVecDividend[9] = CalculateNormalDividend(2, 8, 6, scaler); /* low LoD */
+		quadblock.triNormalVecDividend[8] = CalculateNormalDividend(0, 2, 6, scaler); /* low LoD */
+	}
+	else
+	{
+		quadblock.triNormalVecBitshift = m_triNormalVecBitshift;
+		for (int i = 0; i < 10; i++) { quadblock.triNormalVecDividend[i] = m_triNormalVecDividend[i]; }
+	}
+
 	std::memcpy(buffer.data(), &quadblock, sizeof(quadblock));
 	return buffer;
 }
@@ -898,16 +959,48 @@ void Quadblock::SetDefaultValues()
 		m_faceDrawMode[i] = FaceDrawMode::DRAW_BOTH;
 		m_faceRotateFlip[i] = FaceRotateFlip::NONE;
 	}
+
+	const bool equivalentDiagonal = std::abs((m_p[2].m_pos - m_p[6].m_pos).Length() - ((m_p[2].m_pos - m_p[4].m_pos).Length() + (m_p[4].m_pos - m_p[6].m_pos).Length())) <= EPSILON;
+	const bool equivalentSide02 = std::abs((m_p[0].m_pos - m_p[2].m_pos).Length() - ((m_p[0].m_pos - m_p[1].m_pos).Length() + (m_p[1].m_pos - m_p[2].m_pos).Length())) <= EPSILON;
+	const bool equivalentSide06 = std::abs((m_p[0].m_pos - m_p[6].m_pos).Length() - ((m_p[0].m_pos - m_p[3].m_pos).Length() + (m_p[3].m_pos - m_p[6].m_pos).Length())) <= EPSILON;
+	if (equivalentDiagonal && equivalentSide02 && equivalentSide06) { m_collTriFaces = {{0, 2, 6}}; }
+	else
+	{
+		m_collTriFaces = {
+			{0, 1, 3},
+			{1, 2, 4},
+			{1, 4, 3},
+			{4, 6, 3}
+		};
+	}
+
+	if (!m_triblock)
+	{
+		const bool equivalentSide28 = std::abs((m_p[2].m_pos - m_p[8].m_pos).Length() - ((m_p[2].m_pos - m_p[5].m_pos).Length() + (m_p[5].m_pos - m_p[8].m_pos).Length())) <= EPSILON;
+		const bool equivalentSide68 = std::abs((m_p[6].m_pos - m_p[8].m_pos).Length() - ((m_p[6].m_pos - m_p[7].m_pos).Length() + (m_p[7].m_pos - m_p[8].m_pos).Length())) <= EPSILON;
+		if (equivalentDiagonal && equivalentSide28 && equivalentSide68) { m_collTriFaces.push_back({2, 8, 6}); }
+		else
+		{
+			m_collTriFaces.push_back({2, 5, 4});
+			m_collTriFaces.push_back({4, 7, 6});
+			m_collTriFaces.push_back({4, 5, 7});
+			m_collTriFaces.push_back({5, 8, 7});
+		}
+	}
+
 	m_doubleSided = false;
 	m_checkpointPathable = true;
 	m_checkpointStatus = false;
 	m_visTreeTransparent = false;
+	m_drawOrderHigh = 0x0;
 	m_trigger = QuadblockTrigger::NONE;
 	m_turboPadIndex = TURBO_PAD_INDEX_NONE;
 	m_hide = false;
 	m_animated = false;
 	m_filter = false;
 	m_downforce = 0;
+	m_hasRawNormalData = false;
+	m_hasRawTexture = false;
 	m_filterColor = GuiRenderSettings::defaultFilterColor;
 	m_renderPrimitiveIndex = RENDER_INDEX_NONE;
 }
@@ -940,4 +1033,5 @@ void Quadblock::ComputeBoundingBox()
 	}
 	m_bbox.min = min;
 	m_bbox.max = max;
+	m_hasRawNormalData = false;
 }

@@ -156,6 +156,7 @@ void App::InitUISettings()
 	if (json.contains("LastOpenedFolder")) { Settings::m_lastOpenedFolder = json["LastOpenedFolder"]; }
 	if (json.contains("LastOpenedScriptFolder")) { Settings::m_lastOpenedScriptFolder = json["LastOpenedScriptFolder"]; }
 	if (json.contains("Script")) { Settings::w_python = json["Script"]; }
+	if (json.contains("Bot")) { Settings::w_bot = json["Bot"]; }
 	if (json.contains("CameraBindings"))
 	{
 		const nlohmann::json& bindings = json["CameraBindings"];
@@ -186,19 +187,33 @@ void App::InitUISettings()
 void App::SaveUISettings(bool useDefault)
 {
 	int width, height, xpos, ypos;
+	bool maximized = false;
 	if (useDefault)
 	{
 		width = 600;
 		height = 400;
 		ypos = 50;
 		xpos = 50;
+		maximized = false;
 	}
 	else
 	{
-		glfwGetWindowSize(m_window, &width, &height);
-		glfwGetWindowPos(m_window, &xpos, &ypos);
+		if (glfwGetWindowAttrib(m_window, GLFW_ICONIFIED))
+		{
+			width = Settings::w_width;
+			height = Settings::w_height;
+			xpos = Settings::w_x;
+			ypos = Settings::w_y;
+			maximized = Settings::w_maximized;
+		}
+		else
+		{
+			glfwGetWindowSize(m_window, &width, &height);
+			glfwGetWindowPos(m_window, &xpos, &ypos);
+			maximized = glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED);
+		}
 	}
-	bool maximized = glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED);
+
 	nlohmann::json json;
 	json["Width"] = width;
 	json["Height"] = height;
@@ -217,6 +232,7 @@ void App::SaveUISettings(bool useDefault)
 	json["LastOpenedFolder"] = Settings::m_lastOpenedFolder;
 	json["LastOpenedScriptFolder"] = Settings::m_lastOpenedScriptFolder;
 	json["Script"] = Settings::w_python;
+	json["Bot"] = Settings::w_bot;
 	json["CameraBindings"] = {
 		{"Forward", GuiRenderSettings::camKeyForward},
 		{"Back", GuiRenderSettings::camKeyBack},

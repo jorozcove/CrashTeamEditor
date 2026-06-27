@@ -348,7 +348,28 @@ namespace Script
 		}
 		catch (const py::error_already_set& error)
 		{
-			output = error.what();
+			// Extract full traceback instead of relying on .what()
+			try
+			{
+				py::module_ traceback = py::module_::import("traceback");
+				py::object tb = error.trace();   // the traceback object
+				py::object etype = error.type(); // the exception type
+				py::object evalue = error.value(); // the exception value
+
+				py::object formatted = traceback.attr("format_exception")(etype, evalue, tb);
+				std::string fullTrace;
+				for (const auto& line : formatted)
+				{
+					fullTrace += line.cast<std::string>();
+				}
+				output = fullTrace;
+			}
+			catch (...)
+			{
+				// Fallback if traceback extraction itself fails
+				output = error.what();
+			}
+
 			std::string captured = redirect.Get();
 			if (!captured.empty())
 			{

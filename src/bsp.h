@@ -58,6 +58,7 @@ public:
 	void SetQuadblockIndexes(const std::vector<size_t>& quadblockIndexes);
 	void SetParent(BSP* parent);
 	void Clear();
+	void SplitLeaf(const std::vector<Quadblock>& quadblocks, const AxisSplit axis, const float midpoint);
 	void Generate(const std::vector<Quadblock>& quadblocks, const size_t maxQuadsPerLeaf, const float maxAxisLength);
 	std::vector<uint8_t> Serialize(size_t offQuads) const;
 	void RenderUI(const std::vector<Quadblock>& quadblocks);
@@ -72,11 +73,14 @@ private:
 
 private:
 	size_t m_id;
+	size_t m_idFlag;
 	BSPNode m_node;
 	AxisSplit m_axis;
 	uint16_t m_flags;
 	BSP* m_left;
+	size_t m_leftFlag;
 	BSP* m_right;
+	size_t m_rightFlag;
 	BSP* m_parent;
 	BoundingBox m_bbox;
 	std::vector<size_t> m_quadblockIndexes;

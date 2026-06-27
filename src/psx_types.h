@@ -207,9 +207,9 @@ namespace PSX
 		uint32_t numSCVertices; // 0x174
 		uint32_t offSCVertices; // 0x178
 		Stars stars; // 0x17C
-		uint8_t splitLines[4]; // 0x184
+		int16_t splitLines[2]; // 0x184
 		uint32_t offLevNavTable; // 0x188
-		uint32_t unk_0x18C; // 0x18C //0x0
+		uint32_t jumpYSpeedCap; // 0x18C // JUMP Y SPEED CAP
 		uint32_t offVisMem; // 0x190
 		uint8_t footer[0x60]; // 0x194
 	};
@@ -412,7 +412,7 @@ namespace PSX
 		uint16_t index[NUM_VERTICES_QUADBLOCK]; // 0x0
 		uint16_t flags; // 0x12
 		uint32_t drawOrderLow; // 0x14
-		uint32_t drawOrderHigh; // 0x18
+		int8_t drawOrderHigh[4]; // 0x18
 		uint32_t offMidTextures[4]; // 0x1C
 		PSX::BoundingBox bbox; // 0x2C
 		uint8_t terrain; // 0x38
@@ -490,14 +490,35 @@ namespace PSX
 		uint32_t offBSP[MAX_NUM_PLAYERS]; // 0x20
 	};
 
+
+	struct levAINavTable
+	{
+		uint32_t offAIPathArray[3];
+	};
+
 	struct NavHeader
 	{
 		uint16_t magic;
 		uint16_t numPoints;
-		uint32_t posY;
+		uint16_t unk1; //Padding ?
+		uint16_t posY;
 		uint32_t offLastPoint;
 		uint16_t physUnk[0x20];
 	};
+
+	struct NavFrame // total size : 0x14
+	{
+		PSX::Vec3 pos; // 0x0
+		int8_t rot[4]; // 0x6
+		int16_t distXYZ; // 0xA // Distance to the next node
+		int16_t distXZ; // 0xC
+		uint16_t flags; //0xE
+		int16_t pathChangeOpCode; //0x10
+		uint8_t goBackCount; // 0x12
+		uint8_t specialBits; // 0x13
+	};
+
+
 
 	static constexpr size_t NUM_SKYBOX_SEGMENTS = 8;
 	static constexpr size_t SKYBOX_FACE_STRIDE = 4; // 3 vertex offsets + 1 padding per face
@@ -555,27 +576,28 @@ struct std::hash<PSX::VisibleSet>
 static constexpr int16_t FP_ONE = 0x1000;
 static constexpr int16_t FP_ONE_GEO = 64;
 static constexpr int16_t FP_ONE_CP = 8;
+static constexpr int16_t FP_ONE_ROT = 256;
 
 static inline int16_t ConvertFloat(float x, int16_t one = FP_ONE) { return static_cast<int16_t>(std::round(x * static_cast<float>(one))); };
-static inline int16_t ConvertAngle(float x) { return static_cast<int16_t>(std::round((x * static_cast<float>(FP_ONE)) / 360.0f)); }
+static inline int16_t ConvertAngle(float x, int16_t one = FP_ONE) { return static_cast<int16_t>(std::round((x * static_cast<float>(FP_ONE)) / 360.0f)); }
 static inline float ConvertFP(int16_t fp, int16_t one = FP_ONE) { return static_cast<float>(fp) / static_cast<float>(one); }
-static inline float ConvertFPAngle(int16_t fp) { return (static_cast<float>(fp) * 360.0f) / static_cast<float>(FP_ONE); }
+static inline float ConvertFPAngle(int16_t fp, int16_t one = FP_ONE) { return (static_cast<float>(fp) * 360.0f) / static_cast<float>(FP_ONE); }
 
-static inline PSX::Vec3 ConvertAngle(const Vec3& v)
+static inline PSX::Vec3 ConvertAngle(const Vec3& v, int16_t one = FP_ONE)
 {
 	PSX::Vec3 out = {};
-	out.x = ConvertAngle(v.x);
-	out.y = ConvertAngle(v.y);
-	out.z = ConvertAngle(v.z);
+	out.x = ConvertAngle(v.x, one);
+	out.y = ConvertAngle(v.y, one);
+	out.z = ConvertAngle(v.z, one);
 	return out;
 }
 
-static inline Vec3 ConvertPSXAngle(const PSX::Vec3& v)
+static inline Vec3 ConvertPSXAngle(const PSX::Vec3& v, int16_t one = FP_ONE)
 {
 	Vec3 out = {};
-	out.x = ConvertFPAngle(v.x);
-	out.y = ConvertFPAngle(v.y);
-	out.z = ConvertFPAngle(v.z);
+	out.x = ConvertFPAngle(v.x, one);
+	out.y = ConvertFPAngle(v.y, one);
+	out.z = ConvertFPAngle(v.z, one);
 	return out;
 }
 
@@ -635,4 +657,25 @@ static inline Stars ConvertStars(const PSX::Stars& stars)
     out.seed = stars.seed;
     out.zDepth = stars.zDepth;
     return out;
+}
+
+static inline void ConvertVRAMColorToRGBA(uint16_t vramColor, uint8_t* rgba)
+{
+	uint8_t r = (vramColor >> 0) & 0x1F;
+	uint8_t g = (vramColor >> 5) & 0x1F;
+	uint8_t b = (vramColor >> 10) & 0x1F;
+	bool stp = (vramColor >> 15) != 0;
+
+	rgba[0] = (r << 3) | (r >> 2);
+	rgba[1] = (g << 3) | (g >> 2);
+	rgba[2] = (b << 3) | (b >> 2);
+
+	if (r == 0 && g == 0 && b == 0)
+	{
+		rgba[3] = stp ? 255 : 0;
+	}
+	else
+	{
+		rgba[3] = stp ? 128 : 255;
+	}
 }
