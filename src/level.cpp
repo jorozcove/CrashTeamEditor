@@ -2157,7 +2157,10 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 		if (validVisTree) { set.offVisibleBSPNodes = static_cast<uint32_t>(std::get<size_t>(visibleNodes[quadCount])); }
 		else { set.offVisibleBSPNodes = static_cast<uint32_t>(std::get<size_t>(visibleNodes[0])); }
 		set.offVisibleQuadblocks = static_cast<uint32_t>(std::get<size_t>(visibleQuads[0]));
-		set.offVisibleInstances = static_cast<uint32_t>(std::get<size_t>(visibleInstances[0]));
+		if (orderedQuads.size() % 2 == 0 && quadCount == 0)
+			set.offVisibleInstances = static_cast<uint32_t>(0);
+		else
+			set.offVisibleInstances = static_cast<uint32_t>(1);
 		set.offVisibleExtra = 0;
 
 		size_t visibleSetIndex = 0;
@@ -2351,13 +2354,23 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	printf(nameof(offInstDefList2_ptrArray) " = %zx\n", offInstDefList2_ptrArray);
 	currOffset += (m_modelInstances.size() + 1) * sizeof(uint32_t);
 
+	// Write third InstDef pointer array for visibility even quadcount (NULL-terminated)
+	const size_t offInstDefList3_ptrArray = currOffset;
+	printf(nameof(offInstDefList3_ptrArray) " = %zx\n", offInstDefList2_ptrArray);
+	currOffset += (m_modelInstances.size() + 1) * sizeof(uint32_t);
+
 	// Update visible sets to point to InstDef list
+	bool first = true;
 	for (auto& set : visibleSets)
 	{
 		size_t index = visibleSetMap[set];
 		visibleSetMap.erase(set);
-		set.offVisibleInstances = offInstDefList2_ptrArray;
+		if (first && orderedQuads.size() % 2 == 0)
+			set.offVisibleInstances = offInstDefList3_ptrArray;
+		else 
+			set.offVisibleInstances = offInstDefList2_ptrArray;
 		visibleSetMap[set] = index;
+		first = false;
 	}
 
 	header.offInstances = (instDefOffsets.size() > 0) ? static_cast<uint32_t>(instDefOffsets[0]) : 0;
@@ -2654,6 +2667,14 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	Write(file, &nullTerm, sizeof(nullTerm));
 
 	// Write second InstDef pointer array
+	for (size_t offset : instDefOffsets)
+	{
+		uint32_t ptr = static_cast<uint32_t>(offset);
+		Write(file, &ptr, sizeof(ptr));
+	}
+	Write(file, &nullTerm, sizeof(nullTerm));
+
+	// Write third InstDef pointer array
 	for (size_t offset : instDefOffsets)
 	{
 		uint32_t ptr = static_cast<uint32_t>(offset);
