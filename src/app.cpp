@@ -156,6 +156,7 @@ void App::InitUISettings()
 	if (json.contains("LastOpenedFolder")) { Settings::m_lastOpenedFolder = json["LastOpenedFolder"]; }
 	if (json.contains("LastOpenedScriptFolder")) { Settings::m_lastOpenedScriptFolder = json["LastOpenedScriptFolder"]; }
 	if (json.contains("Script")) { Settings::w_python = json["Script"]; }
+	if (json.contains("Instances")) { Settings::w_modelImporter = json["Instances"]; }
 	if (json.contains("Bot")) { Settings::w_bot = json["Bot"]; }
 	if (json.contains("CameraBindings"))
 	{
@@ -232,6 +233,7 @@ void App::SaveUISettings(bool useDefault)
 	json["LastOpenedFolder"] = Settings::m_lastOpenedFolder;
 	json["LastOpenedScriptFolder"] = Settings::m_lastOpenedScriptFolder;
 	json["Script"] = Settings::w_python;
+	json["Instances"] = Settings::w_modelImporter;
 	json["Bot"] = Settings::w_bot;
 	json["CameraBindings"] = {
 		{"Forward", GuiRenderSettings::camKeyForward},

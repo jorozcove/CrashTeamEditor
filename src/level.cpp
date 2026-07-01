@@ -60,7 +60,6 @@ void Level::Clear(bool clearErrors)
 	m_loaded = false;
 	m_showHotReloadWindow = false;
 	m_showModelExtractorWindow = false;
-	Settings::w_modelImporter = false;
 	m_showExtractorLogWindow = false;
 	for (size_t i = 0; i < NUM_DRIVERS; i++) { m_spawn[i] = Spawn(); }
 	for (size_t i = 0; i < NUM_GRADIENT; i++) { m_skyGradient[i] = ColorGradient(); }
