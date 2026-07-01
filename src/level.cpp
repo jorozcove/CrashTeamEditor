@@ -50,10 +50,6 @@ void Level::OpenModelExtractorWindow()
 	m_showModelExtractorWindow = true;
 }
 
-void Level::OpenModelImporterWindow()
-{
-	Settings::w_modelImporter = true;
-}
 
 void Level::Clear(bool clearErrors)
 {

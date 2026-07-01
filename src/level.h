@@ -114,7 +114,6 @@ private:
 
 	void OpenHotReloadWindow();
 	void OpenModelExtractorWindow();
-	void OpenModelImporterWindow();
 	void RenderUI(Renderer& renderer);
 
 	void InitModels(Renderer& renderer);
