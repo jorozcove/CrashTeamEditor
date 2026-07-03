@@ -318,6 +318,118 @@ void BotPath::RenderUI(int pathIndex)
 	}
 }
 
+
+void Instance::RenderUI(bool& shouldDelete, int index, std::unordered_map<std::string, std::vector<uint8_t>>& importedModels, Vec3& queryPoint)
+{
+
+	if (ImGui::CollapsingHeader(("Instance " + std::to_string(index + 1)).c_str())) 
+	{
+		// Model selection dropdown
+		if (ImGui::BeginCombo("Model", m_modelName.c_str()))
+		{
+			for (const auto& [name, _] : importedModels)
+			{
+				bool isSelected = (m_modelName == name);
+				if (ImGui::Selectable(name.c_str(), isSelected))
+				{
+					m_modelName = name;
+				}
+				if (isSelected)
+				{
+					ImGui::SetItemDefaultFocus();
+				}
+			}
+			ImGui::EndCombo();
+		}
+
+		// Instance name
+		char nameBuffer[16] = {};
+		std::memcpy(nameBuffer, m_name.data(), std::min(m_name.size(), sizeof(nameBuffer)));
+		if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
+		{
+			m_name = std::string(nameBuffer, strnlen(nameBuffer, sizeof(nameBuffer)));
+		}
+
+		ImGui::InputScalar("Model ID", ImGuiDataType_U32, &m_modelID, nullptr, nullptr, "%08X", ImGuiInputTextFlags_CharsHexadecimal);
+
+		ImGui::Text("Pos:");
+		ImGui::SameLine();
+		ImGui::InputFloat3("##pos", m_pos.Data());
+		ImGui::SameLine();
+		if (ImGui::Button(("Set from selection##Instance")))
+		{
+			m_pos = queryPoint;
+		}
+
+		ImGui::Text("Rot:"); ImGui::SameLine();
+		if (ImGui::InputFloat3("##rot", m_rot.Data()))
+		{
+			m_rot.x = Clamp(m_rot.x, -360.0f, 360.0f);
+			m_rot.y = Clamp(m_rot.y, -360.0f, 360.0f);
+			m_rot.z = Clamp(m_rot.z, -360.0f, 360.0f);
+		};
+
+		ImGui::Text("Scale:");
+		ImGui::SameLine();
+		ImGui::InputFloat3("##scale", m_scale.Data());
+		ImGui::InputScalar("Flags", ImGuiDataType_U32, &m_flags, nullptr, nullptr, "%08X", ImGuiInputTextFlags_CharsHexadecimal);
+
+		float colorModelData[3] = { m_color.Red(), m_color.Green(), m_color.Blue() };
+		if (ImGui::ColorEdit3("##modelColor", colorModelData))
+		{
+			m_color = Color(static_cast<float>(colorModelData[0]), colorModelData[1], colorModelData[2]);
+		}
+
+		ImGui::InputScalar("Unk24", ImGuiDataType_U32, &m_unk24);
+		ImGui::InputScalar("Unk28", ImGuiDataType_U32, &m_unk28);
+
+		// BSP collision hitbox settings
+		ImGui::Checkbox("BSP Collision Hitbox", &m_hitbox.enabled);
+		ImGui::SetItemTooltip("Emit a collision hitbox into every BSP leaf overlapping this instance.\nRequired for the instance to be collidable/triggerable in-game.");
+		if (m_hitbox.enabled)
+		{
+			static const char* presetNames[] = { "Pickup", "Solid Wall", "Static Decoration", "Custom" };
+			if (ImGui::Combo("Hitbox Type", &m_hitbox.preset, presetNames, 4))
+			{
+				switch (m_hitbox.preset)
+				{
+				case InstanceHitbox::PICKUP: m_hitbox.flags = 0x000004C0; m_hitbox.halfExtent = 76; break;
+				case InstanceHitbox::SOLID_WALL: m_hitbox.flags = 0x026500A0; m_hitbox.halfExtent = 76; break;
+				case InstanceHitbox::STATIC_DECORATION: m_hitbox.flags = 0x000000C0; m_hitbox.halfExtent = 76; break;
+				}
+			}
+			ImGui::SetItemTooltip("Pickup: trigger-only, vanilla crate radius.\nSolid Wall: blocks the kart.\nStatic Decoration: small solid collider.\nCustom: edit the raw flags yourself.");
+
+			int halfExtent = m_hitbox.halfExtent;
+			if (ImGui::InputInt("Half Extent", &halfExtent))
+			{
+				// halfExtent^2 must fit in int16, so cap at 181
+				m_hitbox.halfExtent = static_cast<int16_t>(std::clamp(halfExtent, 1, 181));
+			}
+			ImGui::SetItemTooltip("Hitbox radius around the instance position (vanilla crates use 76).\nMax 181 since the squared value must fit in 16 bits.");
+
+			int yOffset = m_hitbox.yOffset;
+			if (ImGui::InputInt("Hitbox Y Offset", &yOffset))
+			{
+				m_hitbox.yOffset = static_cast<int16_t>(std::clamp(yOffset, -32000, 32000));
+			}
+			ImGui::SetItemTooltip("Raises the hitbox center above the instance position.\nVanilla crates use ~46 so karts overlap at chest height.");
+
+			ImGui::BeginDisabled(m_hitbox.preset != InstanceHitbox::CUSTOM);
+			ImGui::InputScalar("Hitbox Flags", ImGuiDataType_U32, &m_hitbox.flags, nullptr, nullptr, "%08X", ImGuiInputTextFlags_CharsHexadecimal);
+			ImGui::EndDisabled();
+			ImGui::SetItemTooltip("Raw hitbox flags (editable with Custom type).\nBit 0x80: set = trigger-only (pass through), clear = solid collision.");
+		}
+
+		// Delete button
+		if (ImGui::Button("Delete Instance"))
+		{
+			shouldDelete = true;
+		}
+	}
+
+}
+
 template<typename T, MaterialType M>
 bool MaterialProperty<T, M>::RenderUI(const std::string& material, const std::vector<size_t>& quadblockIndexes, std::vector<Quadblock>& quadblocks)
 {
@@ -1542,7 +1654,7 @@ void Level::RenderUI(Renderer& renderer)
 
 			// Model Instances section
 			ImGui::Separator();
-			ImGui::Text("Model Instances (%zu)", m_modelInstances.size());
+			ImGui::Text("Model Instances (%zu)", m_instances.size());
 			ImGui::Separator();
 
 			// Add Instance button
@@ -1554,16 +1666,7 @@ void Level::RenderUI(Renderer& renderer)
 
 			if (ImGui::Button("+ Add Instance"))
 			{
-				PSX::InstDef newInst = {};
-				memcpy(&newInst.name, "NewInstance", 11);
-				newInst.scale.x = newInst.scale.y = newInst.scale.z = 0x1000; // Default scale = 1.0
-				newInst.flags = 0xB;
-				newInst.modelID = 0xFFFFFFFF;
-				newInst.offModel = 0;
-
-				m_modelInstances.push_back(newInst);
-				m_modelInstanceNames.push_back(m_importedModels.begin()->first); // Default to first model
-				m_modelInstanceHitboxes.emplace_back();
+				m_instances.emplace_back(m_importedModels.begin()->first);
 			}
 
 			if (!hasModels)
@@ -1576,119 +1679,24 @@ void Level::RenderUI(Renderer& renderer)
 			}
 
 			// Show instances
-			// Keep the hitbox parallel array in sync with instances created
-			// before this field existed (e.g. older session state)
-			if (m_modelInstanceHitboxes.size() < m_modelInstances.size())
-			{
-				m_modelInstanceHitboxes.resize(m_modelInstances.size());
-			}
 			int instanceToDelete = -1;
-			for (size_t i = 0; i < m_modelInstances.size(); i++)
+			for (size_t i = 0; i < m_instances.size(); i++)
 			{
 				ImGui::PushID(static_cast<int>(i));
-
-				if (ImGui::CollapsingHeader(("Instance " + std::to_string(i + 1)).c_str()))
-				{
-					PSX::InstDef& inst = m_modelInstances[i];
-					std::string& modelName = m_modelInstanceNames[i];
-
-					// Model selection dropdown
-					if (ImGui::BeginCombo("Model", modelName.c_str()))
-					{
-						for (const auto& [name, _] : m_importedModels)
-						{
-							bool isSelected = (modelName == name);
-							if (ImGui::Selectable(name.c_str(), isSelected))
-							{
-								modelName = name;
-							}
-							if (isSelected)
-							{
-								ImGui::SetItemDefaultFocus();
-							}
-						}
-						ImGui::EndCombo();
-					}
-
-					// Instance name
-					char nameBuffer[16] = {};
-					memcpy(nameBuffer, inst.name, sizeof(inst.name));
-					if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
-					{
-						memcpy(inst.name, nameBuffer, sizeof(inst.name));
-					}
-
-					ImGui::InputScalar("Model ID", ImGuiDataType_U32, &inst.modelID, nullptr, nullptr, "%08X", ImGuiInputTextFlags_CharsHexadecimal);
-					ImGui::Text("Position"); ImGui::SameLine();
-					ImGui::InputScalarN("##pos", ImGuiDataType_S16, &inst.pos, 3);
-					ImGui::Text("Rotation"); ImGui::SameLine();
-					ImGui::InputScalarN("##rot", ImGuiDataType_S16, &inst.rot, 3);
-					ImGui::Text("Scale"); ImGui::SameLine();
-					ImGui::InputScalarN("##scale", ImGuiDataType_S16, &inst.scale, 3);
-					ImGui::InputScalar("Flags", ImGuiDataType_U32, &inst.flags, nullptr, nullptr, "%08X", ImGuiInputTextFlags_CharsHexadecimal);
-					ImGui::InputScalar("Color RGBA", ImGuiDataType_U32, &inst.colorRGBA, nullptr, nullptr, "%08X", ImGuiInputTextFlags_CharsHexadecimal);
-					ImGui::InputScalar("Maybe Scale/Padding", ImGuiDataType_U16, &inst.maybeScaleMaybePadding);
-					ImGui::InputScalar("Unk24", ImGuiDataType_U32, &inst.unk24);
-					ImGui::InputScalar("Unk28", ImGuiDataType_U32, &inst.unk28);
-
-					// BSP collision hitbox settings
-					InstanceHitbox& hitbox = m_modelInstanceHitboxes[i];
-					ImGui::Checkbox("BSP Collision Hitbox", &hitbox.enabled);
-					ImGui::SetItemTooltip("Emit a collision hitbox into every BSP leaf overlapping this instance.\nRequired for the instance to be collidable/triggerable in-game.");
-					if (hitbox.enabled)
-					{
-						static const char* presetNames[] = { "Pickup", "Solid Wall", "Static Decoration", "Custom" };
-						if (ImGui::Combo("Hitbox Type", &hitbox.preset, presetNames, 4))
-						{
-							switch (hitbox.preset)
-							{
-							case InstanceHitbox::PICKUP: hitbox.flags = 0x000004C0; hitbox.halfExtent = 76; break;
-							case InstanceHitbox::SOLID_WALL: hitbox.flags = 0x026500A0; hitbox.halfExtent = 76; break;
-							case InstanceHitbox::STATIC_DECORATION: hitbox.flags = 0x000000C0; hitbox.halfExtent = 76; break;
-							}
-						}
-						ImGui::SetItemTooltip("Pickup: trigger-only, vanilla crate radius.\nSolid Wall: blocks the kart.\nStatic Decoration: small solid collider.\nCustom: edit the raw flags yourself.");
-
-						int halfExtent = hitbox.halfExtent;
-						if (ImGui::InputInt("Half Extent", &halfExtent))
-						{
-							// halfExtent^2 must fit in int16, so cap at 181
-							hitbox.halfExtent = static_cast<int16_t>(std::clamp(halfExtent, 1, 181));
-						}
-						ImGui::SetItemTooltip("Hitbox radius around the instance position (vanilla crates use 76).\nMax 181 since the squared value must fit in 16 bits.");
-
-						int yOffset = hitbox.yOffset;
-						if (ImGui::InputInt("Hitbox Y Offset", &yOffset))
-						{
-							hitbox.yOffset = static_cast<int16_t>(std::clamp(yOffset, -32000, 32000));
-						}
-						ImGui::SetItemTooltip("Raises the hitbox center above the instance position.\nVanilla crates use ~46 so karts overlap at chest height.");
-
-						ImGui::BeginDisabled(hitbox.preset != InstanceHitbox::CUSTOM);
-						ImGui::InputScalar("Hitbox Flags", ImGuiDataType_U32, &hitbox.flags, nullptr, nullptr, "%08X", ImGuiInputTextFlags_CharsHexadecimal);
-						ImGui::EndDisabled();
-						ImGui::SetItemTooltip("Raw hitbox flags (editable with Custom type).\nBit 0x80: set = trigger-only (pass through), clear = solid collision.");
-					}
-
-					// Delete button
-					if (ImGui::Button("Delete Instance"))
-					{
-						instanceToDelete = static_cast<int>(i);
-					}
-				}
-
+				bool shouldDelete = false;
+				m_instances[i].RenderUI(shouldDelete, static_cast<int>(i), m_importedModels, m_rendererQueryPoint);
+				if (shouldDelete)
+					instanceToDelete = i;
 				ImGui::PopID();
 			}
 
 			// Delete instance after iteration
 			if (instanceToDelete >= 0)
 			{
-				m_modelInstances.erase(m_modelInstances.begin() + instanceToDelete);
-				m_modelInstanceNames.erase(m_modelInstanceNames.begin() + instanceToDelete);
-				m_modelInstanceHitboxes.erase(m_modelInstanceHitboxes.begin() + instanceToDelete);
+				m_instances.erase(m_instances.begin() + instanceToDelete);
 			}
 
-			if (m_modelInstances.empty())
+			if (m_instances.empty())
 			{
 				ImGui::TextDisabled("No instances created");
 			}

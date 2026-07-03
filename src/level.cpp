@@ -2321,18 +2321,22 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 
 	// Count unique models referenced by instances
 	std::unordered_set<std::string> uniqueModelNames;
-	for (const std::string& modelName : m_modelInstanceNames)
+	for (const Instance& inst : m_instances)
 	{
-		uniqueModelNames.insert(modelName);
+		uniqueModelNames.insert(inst.GetModelName());
 	}
 
-	header.numInstances = static_cast<uint32_t>(m_modelInstances.size());
+	header.numInstances = static_cast<uint32_t>(m_instances.size());
 	header.numModels = static_cast<uint32_t>(uniqueModelNames.size());
 
 	// Write InstDefs
+	size_t offInstDefArray = currOffset;
 	std::vector<size_t> instDefOffsets;
-	for (size_t i = 0; i < m_modelInstances.size(); i++)
+	std::vector<std::vector<uint8_t>> serializedInstDef;
+	for (size_t i = 0; i < m_instances.size(); i++)
 	{
+		serializedInstDef.push_back(m_instances[i].Serialize());
+
 		const size_t offInstDef = currOffset;
 		instDefOffsets.push_back(offInstDef);
 		printf("offInstDef[%zu] = %zx\n", i, offInstDef);
@@ -2342,17 +2346,17 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	// Write InstDef pointer array (NULL-terminated)
 	const size_t offInstDefList_ptrArray = currOffset;
 	printf(nameof(offInstDefList_ptrArray) " = %zx\n", offInstDefList_ptrArray);
-	currOffset += (m_modelInstances.size() + 1) * sizeof(uint32_t);
+	currOffset += (instDefOffsets.size() + 1) * sizeof(uint32_t);
 
 	// Write second InstDef pointer array for visibility (NULL-terminated)
 	const size_t offInstDefList2_ptrArray = currOffset;
 	printf(nameof(offInstDefList2_ptrArray) " = %zx\n", offInstDefList2_ptrArray);
-	currOffset += (m_modelInstances.size() + 1) * sizeof(uint32_t);
+	currOffset += (instDefOffsets.size() + 1) * sizeof(uint32_t);
 
 	// Write third InstDef pointer array for visibility even quadcount (NULL-terminated)
 	const size_t offInstDefList3_ptrArray = currOffset;
-	printf(nameof(offInstDefList3_ptrArray) " = %zx\n", offInstDefList2_ptrArray);
-	currOffset += (m_modelInstances.size() + 1) * sizeof(uint32_t);
+	printf(nameof(offInstDefList3_ptrArray) " = %zx\n", offInstDefList3_ptrArray);
+	currOffset += (instDefOffsets.size() + 1) * sizeof(uint32_t);
 
 	// Update visible sets to point to InstDef list
 	bool first = true;
@@ -2368,7 +2372,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 		first = false;
 	}
 
-	header.offInstances = (instDefOffsets.size() > 0) ? static_cast<uint32_t>(instDefOffsets[0]) : 0;
+	header.offInstances = (m_instances.size() > 0) ? static_cast<uint32_t>(offInstDefArray) : 0;
 	header.offModelInstances = static_cast<uint32_t>(offInstDefList_ptrArray);
 
 	// Write Model data for each unique model
@@ -2395,11 +2399,21 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	currOffset += (uniqueModelNames.size() + 1) * sizeof(uint32_t);
 	header.offModels = static_cast<uint32_t>(offModelList_ptrArray);
 
+
+	//Update Insdef offModel
+	for (size_t i = 0; i < serializedInstDef.size(); i++)
+	{
+		PSX::InstDef* inst = reinterpret_cast<PSX::InstDef*>(serializedInstDef[i].data());
+		inst->offModel = static_cast<uint32_t>(modelOffsets[m_instances[i].GetModelName()]);
+	}
+
 	// Build BSP-leaf instance hitbox lists.
 	// Each BSP leaf whose bbox overlaps an enabled hitbox gets a list of
 	// InstHitbox entries (one per overlapping instance) plus a 4-byte
 	// terminator. The leaf's offHitbox field (already serialized into
 	// serializedBSPs) is patched to point at its list.
+
+	// NOTE : Shouldn't be done here. Must be done within BSP creation, and serialized with BSP.
 	struct LeafHitboxList
 	{
 		size_t leafFileOffset; // file offset of the BSP leaf node
@@ -2409,15 +2423,15 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	std::vector<LeafHitboxList> leafHitboxLists;
 	{
 		std::vector<PSX::InstHitbox> enabledHitboxes;
-		for (size_t i = 0; i < m_modelInstances.size(); i++)
+		for (size_t i = 0; i < m_instances.size(); i++)
 		{
-			if (i >= m_modelInstanceHitboxes.size() || !m_modelInstanceHitboxes[i].enabled) { continue; }
-			const InstanceHitbox& settings = m_modelInstanceHitboxes[i];
-			const PSX::InstDef& inst = m_modelInstances[i];
+			const InstanceHitbox& settings = m_instances[i].GetHitbox();
+			if (!settings.enabled) { continue; }
+			PSX::InstDef* inst = reinterpret_cast<PSX::InstDef*>(serializedInstDef[i].data());
 			const int he = settings.halfExtent;
-			const int cx = inst.pos.x;
-			const int cy = inst.pos.y + settings.yOffset;
-			const int cz = inst.pos.z;
+			const int cx = inst->pos.x;
+			const int cy = inst->pos.y + settings.yOffset;
+			const int cz = inst->pos.z;
 
 			PSX::InstHitbox hitbox = {};
 			hitbox.flags = settings.flags;
@@ -2486,7 +2500,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	};
 
 	// Add InstDef.offModel pointers
-	for (size_t i = 0; i < m_modelInstances.size(); i++)
+	for (size_t i = 0; i < m_instances.size(); i++)
 	{
 		pointerMap.push_back(CALCULATE_OFFSET(PSX::InstDef, offModel, instDefOffsets[i]));
 	}
@@ -2640,17 +2654,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	if (!skyboxData.empty()) { Write(file, skyboxData.data(), skyboxData.size()); }
 
 	// Write InstDefs
-	for (size_t i = 0; i < m_modelInstances.size(); i++)
-	{
-		PSX::InstDef inst = {};  // Zero-initialize to clear any garbage in name[] trailing bytes
-		inst = m_modelInstances[i];
-		// Ensure name is null-padded (copy may leave garbage after null terminator)
-		size_t nameLen = strnlen(inst.name, sizeof(inst.name));
-		memset(inst.name + nameLen, 0, sizeof(inst.name) - nameLen);
-		// Patch offModel to point to the actual model (stored offset, game adds 4 to get actual position)
-		inst.offModel = static_cast<uint32_t>(modelOffsets[m_modelInstanceNames[i]]);
-		Write(file, &inst, sizeof(inst));
-	}
+	for (const std::vector<uint8_t>& inst : serializedInstDef) { Write(file, inst.data(), inst.size()); }
 
 	// Write InstDef pointer arrays (NULL-terminated, stored offsets - game adds 4 to get actual position)
 	for (size_t offset : instDefOffsets)

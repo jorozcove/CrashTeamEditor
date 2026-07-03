@@ -214,41 +214,20 @@ namespace PSX
 		uint8_t footer[0x60]; // 0x194
 	};
 
-	struct InstDef
+	struct InstDef // size 0x40
 	{
-		// 0
 		char name[0x10];
-
-		// 0x10 (0x18 - 8)
-		uint32_t offModel;
-
-		// 0x14 (0x1c - 8)
-		Vec3 scale;
-
-		int16_t maybeScaleMaybePadding;
-
-		// 0x1c (0x24 - 8)
-		uint32_t colorRGBA;
-
-		// 0x20 (0x28 - 8)
-		uint32_t flags;
-
+		uint32_t offModel;	 // 0x10 (0x18 - 8)
+		Vec3 scale;			 // 0x14 (0x1c - 8)
+		int16_t maybeScaleMaybePadding;		
+		Color colorRGBA;	 // 0x1c (0x24 - 8)	
+		uint32_t flags;		 // 0x20 (0x28 - 8)
 		uint32_t unk24;
-		uint32_t unk28;
-
-		// 0x2c
-		uint32_t offInstance;
-
-		// 0x30
-		Vec3 pos;
-
-		// 0x36
-		Vec3 rot;
-
-		// 0x3c
-		int32_t modelID;
-
-		// 0x40 -- struct size
+		uint32_t unk28;	
+		uint32_t offInstance;// 0x2c	
+		Vec3 pos;			 // 0x30	
+		Vec3 rot;			 // 0x36
+		int32_t modelID;	 // 0x3c
 	};
 
 	// BSP-leaf instance hitbox entry (BSPLeaf::offHitbox points to a list of

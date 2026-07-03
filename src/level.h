@@ -14,6 +14,7 @@
 #include "vistree.h"
 #include "skybox.h"
 #include "bots.h"
+#include "instance.h"
 
 #include <nlohmann/json.hpp>
 #include <vector>
@@ -25,19 +26,6 @@
 #include <cstdint>
 
 static constexpr size_t REND_NO_SELECTED_QUADBLOCK = std::numeric_limits<size_t>::max();
-
-// Per-InstDef settings for emitting a BSP-leaf collision hitbox at save time.
-// Presets mirror flag/extent combos observed in vanilla levels (proto8).
-struct InstanceHitbox
-{
-	enum Preset : int { PICKUP = 0, SOLID_WALL = 1, STATIC_DECORATION = 2, CUSTOM = 3 };
-
-	bool enabled = false;
-	int preset = Preset::PICKUP;
-	uint32_t flags = 0x000004C0; // vanilla pickup flags (bit 0x80 set = trigger-only)
-	int16_t halfExtent = 76; // vanilla pickup trigger radius
-	int16_t yOffset = 0; // hitbox center offset above InstDef position
-};
 
 namespace LevelModels
 {
@@ -200,7 +188,6 @@ private:
 
 	// Model textures placed in VRAM (filled by UpdateVRM, used by SaveLEV)
 	std::vector<ModelTextureForVRM> m_modelTexturesInVRAM;
-	std::vector<PSX::InstDef> m_modelInstances;
-	std::vector<std::string> m_modelInstanceNames;  // Parallel array: which model each instance uses
-	std::vector<InstanceHitbox> m_modelInstanceHitboxes; // Parallel array: BSP collision hitbox settings
+
+	std::vector<Instance> m_instances;
 };

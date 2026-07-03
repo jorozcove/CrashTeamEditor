@@ -911,7 +911,7 @@ void LevDataExtractor::ExtractModels(void)
 					txt << "pos             = (" << inst->pos.x << ", " << inst->pos.y << ", " << inst->pos.z << ")\n";
 					txt << "rot             = (" << inst->rot.x << ", " << inst->rot.y << ", " << inst->rot.z << ")\n";
 					txt << "scale           = (" << inst->scale.x << ", " << inst->scale.y << ", " << inst->scale.z << ")\n";
-					txt << "colorRGBA       = 0x" << std::hex << inst->colorRGBA << std::dec << "\n";
+					txt << "colorRGBA       = 0x" << std::hex << std::bit_cast<uint32_t>(inst->colorRGBA) << std::dec << "\n";
 					txt << "unk24           = 0x" << std::hex << inst->unk24 << std::dec << "\n";
 					txt << "unk28           = 0x" << std::hex << inst->unk28 << std::dec << "\n";
 					txt << "maybeScaleMaybePadding = " << inst->maybeScaleMaybePadding << "\n";
