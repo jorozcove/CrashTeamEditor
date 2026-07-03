@@ -356,7 +356,7 @@ const std::vector<size_t>& AnimTexture::GetQuadblockIndexes() const
 bool AnimTexture::ReadAnimation(const std::filesystem::path& path)
 {
 	Level dummy;
-	if (!dummy.Load(path)) { return false; }
+	if (!dummy.Load(path, false)) { return false; }
 
 	std::unordered_map<std::filesystem::path, size_t> loadedPaths;
 	const std::vector<Quadblock>& quadblocks = dummy.GetQuadblocks();

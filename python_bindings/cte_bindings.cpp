@@ -557,7 +557,7 @@ void init_crashteameditor(py::module_& m)
 	py::class_<Level> level(m, "Level");
 	level
 		.def(py::init<>())
-		.def("load", &Level::Load, py::arg("filename"))
+		.def("load", [](Level& self, const std::string& filename) {return self.Load(filename, true);}, py::arg("filename"))
 		.def("save", &Level::Save, py::arg("path"))
 		.def_property_readonly("is_loaded", &Level::IsLoaded)
 		.def("clear", &Level::Clear, py::arg("clear_errors") = true)

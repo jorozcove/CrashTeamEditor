@@ -44,7 +44,7 @@ namespace LevelModels
 class Level
 {
 public:
-	bool Load(const std::filesystem::path& filename);
+	bool Load(const std::filesystem::path& filename, bool isLevel);
 	bool Save(const std::filesystem::path& path);
 	bool SaveLEV(const std::filesystem::path& path, bool useRawTexture);
 	bool SaveOBJ(const std::filesystem::path& objFile);
@@ -85,7 +85,7 @@ public:
 private:
 	void ManageTurbopad(Quadblock& quadblock);
 	bool LoadLEV(const std::filesystem::path& levFile);
-	bool LoadOBJ(const std::filesystem::path& objFile);
+	bool LoadOBJ(const std::filesystem::path& objFile, bool isLevel);
 	std::vector<Vec3> LoadPath(const std::filesystem::path& path);
 
 

@@ -55,7 +55,7 @@ void UI::MainMenu()
 				{
 					const std::filesystem::path levPath = selection.front();
 					Settings::m_lastOpenedFolder = levPath.string();
-					if (!m_lev.Load(levPath)) { m_lev.Clear(false); }
+					if (!m_lev.Load(levPath, true)) { m_lev.Clear(false); }
 					else { m_rend.SetCameraToLevelSpawn(m_lev.m_spawn[1].pos, m_lev.m_spawn[1].rot); }
 				}
 			}
