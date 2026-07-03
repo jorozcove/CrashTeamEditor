@@ -1595,20 +1595,19 @@ void Level::RenderUI(Renderer& renderer)
 			ImGui::SetItemTooltip(modelPath.c_str()); ImGui::SameLine();
 			if (ImGui::Button("...##modelimporter"))
 			{
-				auto selection = pfd::open_file("CTR Model File", m_parentPath.string(), { "CTR Model Files", "*.ctrmodel" }, pfd::opt::force_path).result();
-				if (!selection.empty()) { m_modelImporterPath = selection.front(); }
+				auto selection = pfd::open_file("CTR Model File", Settings::m_lastOpenedModelFolder, { "CTR Model Files", "*.ctrmodel" }, pfd::opt::force_path).result();
+				if (!selection.empty())
+				{ 
+					Settings::m_lastOpenedModelFolder = std::filesystem::path(selection.front()).parent_path().string();
+					m_modelImporterPath = selection.front(); 
+				}
 			}
 
 			bool disabled = modelPath.empty();
 			ImGui::BeginDisabled(disabled);
 			if (ImGui::Button("Import Model"))
 			{
-				if (ImportModel(m_modelImporterPath))
-				{
-					m_logMessage = "Successfully imported model: " + m_modelImporterPath.filename().string();
-					m_showLogWindow = true;
-				}
-				else
+				if (!ImportModel(m_modelImporterPath))
 				{
 					m_logMessage = "Failed to import model: " + m_modelImporterPath.filename().string();
 					m_showLogWindow = true;

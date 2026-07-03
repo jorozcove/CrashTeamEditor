@@ -25,9 +25,10 @@ bool Settings::w_renderer = false;
 bool Settings::w_ghost = false;
 bool Settings::w_python = false;
 bool Settings::w_modelImporter = false;
-bool Settings::w_bot = false;
+bool Settings::w_bot = false; 
 std::string Settings::m_lastOpenedFolder = ".";
 std::string Settings::m_lastOpenedScriptFolder = ".";
+std::string Settings::m_lastOpenedModelFolder = ".";
 
 UI::UI() : m_rend(Settings::w_width, Settings::w_height)
 {

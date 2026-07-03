@@ -155,6 +155,7 @@ void App::InitUISettings()
 	if (json.contains("Spawn")) { Settings::w_spawn = json["Spawn"]; }
 	if (json.contains("LastOpenedFolder")) { Settings::m_lastOpenedFolder = json["LastOpenedFolder"]; }
 	if (json.contains("LastOpenedScriptFolder")) { Settings::m_lastOpenedScriptFolder = json["LastOpenedScriptFolder"]; }
+	if (json.contains("LastOpenedModelFolder")) { Settings::m_lastOpenedModelFolder = json["LastOpenedModelFolder"]; }
 	if (json.contains("Script")) { Settings::w_python = json["Script"]; }
 	if (json.contains("Instances")) { Settings::w_modelImporter = json["Instances"]; }
 	if (json.contains("Bot")) { Settings::w_bot = json["Bot"]; }
@@ -232,6 +233,7 @@ void App::SaveUISettings(bool useDefault)
 	json["Spawn"] = Settings::w_spawn;
 	json["LastOpenedFolder"] = Settings::m_lastOpenedFolder;
 	json["LastOpenedScriptFolder"] = Settings::m_lastOpenedScriptFolder;
+	json["LastOpenedModelFolder"] = Settings::m_lastOpenedModelFolder;
 	json["Script"] = Settings::w_python;
 	json["Instances"] = Settings::w_modelImporter;
 	json["Bot"] = Settings::w_bot;
