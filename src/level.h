@@ -190,4 +190,6 @@ private:
 	std::vector<ModelTextureForVRM> m_modelTexturesInVRAM;
 
 	std::vector<Instance> m_instances;
+	int m_openInstanceIndex = -1;
+	int m_closeInstanceIndex = -1;
 };
