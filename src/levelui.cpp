@@ -319,10 +319,11 @@ void BotPath::RenderUI(int pathIndex)
 }
 
 
-void Instance::RenderUI(bool& shouldDelete, int index, std::unordered_map<std::string, std::vector<uint8_t>>& importedModels, Vec3& queryPoint)
+void Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, std::unordered_map<std::string, std::vector<uint8_t>>& importedModels, Vec3& queryPoint)
 {
 
-	if (ImGui::CollapsingHeader(("Instance " + std::to_string(index + 1)).c_str())) 
+	std::string headerLabel = m_name.empty() ? ("Instance " + std::to_string(index + 1)) : m_name;
+	if (ImGui::CollapsingHeader((headerLabel + "###instHeader").c_str()))
 	{
 		// Model selection dropdown
 		if (ImGui::BeginCombo("Model", m_modelName.c_str()))
@@ -350,11 +351,97 @@ void Instance::RenderUI(bool& shouldDelete, int index, std::unordered_map<std::s
 			m_name = std::string(nameBuffer, strnlen(nameBuffer, sizeof(nameBuffer)));
 		}
 
-		ImGui::InputScalar("Model ID", ImGuiDataType_U32, &m_modelID, nullptr, nullptr, "%08X", ImGuiInputTextFlags_CharsHexadecimal);
+		// Model ID selector (behavior selector)
+		{
+			ModelId prevModelID = m_modelID;
+
+			static const std::pair<const char*, ModelId> modelIdInfos[] = {
+				{"No Function",          ModelId::NOFUNC},
+				{"Animate If Hit",       ModelId::ANIMATE_IF_HIT},
+				{"Wumpa Fruit",          ModelId::WUMPA_FRUIT},
+				{"Explosive Crate",      ModelId::EXPLOSIVE_CRATE},
+				{"Wumpa Crate",          ModelId::FRUIT_CRATE},
+				{"Random Crate",         ModelId::RANDOM_CRATE},
+				{"Time Crate 1",         ModelId::TIME_CRATE_1},
+				{"Time Crate 2",         ModelId::TIME_CRATE_2},
+				{"Time Crate 3",         ModelId::TIME_CRATE_3},
+				{"Poison",               ModelId::POISON},
+				{"Flame Jet",            ModelId::FLAME_JET},
+				{"Piranha Plant",        ModelId::PIRANHA_PLANT},
+				{"Gate",                 ModelId::GATE},
+				{"Start Line",           ModelId::START_LINE},
+				{"Temp Snowball",        ModelId::TEMP_SNOWBALL},
+				{"Finish Line",          ModelId::FINISH_LINE},
+				{"Armadillo",            ModelId::ARMADILLO},
+				{"Blade",                ModelId::BLADE},
+				{"Seal",                 ModelId::DYNAMIC_SEAL},
+				{"Orca",                 ModelId::DYNAMIC_ORCA},
+				{"Barrel",               ModelId::DYNAMIC_BARREL},
+				{"Von Labass",           ModelId::DYNAMIC_VONLABASS},
+				{"Skunk",                ModelId::DYNAMIC_SKUNK},
+				{"Turtle",               ModelId::DYNAMIC_TURTLE},
+				{"Spider",               ModelId::DYNAMIC_SPIDER},
+				{"Spider Shadow",        ModelId::DYNAMIC_SPIDERSHADOW},
+				{"Fireball",             ModelId::DYNAMIC_FIREBALL},
+				{"Castle Sign",          ModelId::STATIC_CASTLE_SIGN},
+				{"Banner",               ModelId::STATIC_BANNER},
+				{"Warp Pad",             ModelId::STATIC_WARPPAD},
+				{"Teeth",                ModelId::STATIC_TEETH},
+				{"Start Text",           ModelId::STATIC_STARTTEXT},
+				{"Save Object",          ModelId::STATIC_SAVEOBJ},
+				{"C Letter",             ModelId::STATIC_CTR},
+				{"T Letter",             ModelId::STATIC_CTR},
+				{"R Letter",             ModelId::STATIC_CTR}
+			};
+
+			const char* preview = "Unknown";
+			for (const auto& [name, id] : modelIdInfos)
+			{
+				if (id == m_modelID)
+				{
+					preview = name;
+					break;
+				}
+			}
+			if (ImGui::BeginCombo("Type", preview))
+			{
+				for (const auto& [name, id] : modelIdInfos)
+				{
+					bool isSelected = (id == m_modelID);
+					if (ImGui::Selectable(name, isSelected))
+					{
+						m_modelID = id;
+					}
+					if (isSelected)
+						ImGui::SetItemDefaultFocus();
+				}
+				ImGui::EndCombo();
+			}
+			ImGui::SetItemTooltip("Determines the instance's in-game behavior (Model ID).");
+
+			// Auto-set hitbox when model ID changes to a crate or wumpa fruit
+			if (m_modelID != prevModelID)
+			{
+				if (m_modelID == ModelId::WUMPA_FRUIT)
+				{
+					m_hitbox.enabled = true;
+					m_hitbox.preset = InstanceHitbox::PICKUP;
+					m_hitbox.yOffset = 0;
+				}
+				else if (m_modelID == ModelId::EXPLOSIVE_CRATE || m_modelID == ModelId::FRUIT_CRATE ||
+				         m_modelID == ModelId::RANDOM_CRATE || m_modelID == ModelId::TIME_CRATE_1 ||
+				         m_modelID == ModelId::TIME_CRATE_2 || m_modelID == ModelId::TIME_CRATE_3)
+				{
+					m_hitbox.enabled = true;
+					m_hitbox.preset = InstanceHitbox::PICKUP;
+					m_hitbox.yOffset = 46;
+				}
+			}
+		}
 
 		ImGui::Text("Pos:");
 		ImGui::SameLine();
-		ImGui::InputFloat3("##pos", m_pos.Data());
+		ImGui::DragFloat3("##pos", m_pos.Data(), 0.5f);
 		ImGui::SameLine();
 		if (ImGui::Button(("Set from selection##Instance")))
 		{
@@ -362,7 +449,7 @@ void Instance::RenderUI(bool& shouldDelete, int index, std::unordered_map<std::s
 		}
 
 		ImGui::Text("Rot:"); ImGui::SameLine();
-		if (ImGui::InputFloat3("##rot", m_rot.Data()))
+		if (ImGui::DragFloat3("##rot", m_rot.Data(), 1.0f, -360.0f, 360.0f))
 		{
 			m_rot.x = Clamp(m_rot.x, -360.0f, 360.0f);
 			m_rot.y = Clamp(m_rot.y, -360.0f, 360.0f);
@@ -372,7 +459,41 @@ void Instance::RenderUI(bool& shouldDelete, int index, std::unordered_map<std::s
 		ImGui::Text("Scale:");
 		ImGui::SameLine();
 		ImGui::InputFloat3("##scale", m_scale.Data());
-		ImGui::InputScalar("Flags", ImGuiDataType_U32, &m_flags, nullptr, nullptr, "%08X", ImGuiInputTextFlags_CharsHexadecimal);
+		// Flags as checkboxes (retractable, retracted by default)
+		if (ImGui::TreeNode("Flags"))
+		{
+			static const std::pair<const char*, InstanceFlag> flagInfos[] = {
+				{"Draw Instance",        InstanceFlag::DRAW_INSTANCE},
+				{"Animation: Loop",      InstanceFlag::ANIM_LOOP},
+				{"Animation: Stop End",  InstanceFlag::ANIM_STOP_AT_END},
+				{"Hide Model",           InstanceFlag::HIDE_MODEL},
+				{"Pixel LOD",            InstanceFlag::PIXEL_LOD},
+				{"Screenspace",          InstanceFlag::SCREENSPACE_INSTANCE},
+				{"Billboard",            InstanceFlag::CUSTOM_MATRIX},
+				{"Draw Transparent",     InstanceFlag::DRAW_TRANSPARENT},
+				{"Use Instance Color",   InstanceFlag::USE_SPECULAR_LIGHT},
+				{"Reflection",           InstanceFlag::REFLECTION_FUNC23},
+				{"Depth Fade",           InstanceFlag::DEPTH_FADE},
+				{"Visible In Gameplay",  InstanceFlag::VISIBLE_DURING_GAMEPLAY},
+				{"Owner Pushbuf Gate",   InstanceFlag::OWNER_PUSHBUFFER_GATE},
+				{"Draw Huge",            InstanceFlag::DRAW_HUGE},
+				{"Hide Before Pause",    InstanceFlag::INVISIBLE_BEFORE_PAUSE},
+				{"Hide During Pause",    InstanceFlag::INVISIBLE_DURING_PAUSE},
+			};
+			for (const auto& [label, bit] : flagInfos)
+			{
+				uint32_t val = static_cast<uint32_t>(bit);
+				bool checked = (m_flags & val) != 0;
+				if (ImGui::Checkbox(label, &checked))
+				{
+					if (checked)
+						m_flags |= val;
+					else
+						m_flags &= ~val;
+				}
+			}
+			ImGui::TreePop();
+		}
 
 		float colorModelData[3] = { m_color.Red(), m_color.Green(), m_color.Blue() };
 		if (ImGui::ColorEdit3("##modelColor", colorModelData))
@@ -393,7 +514,7 @@ void Instance::RenderUI(bool& shouldDelete, int index, std::unordered_map<std::s
 			{
 				switch (m_hitbox.preset)
 				{
-				case InstanceHitbox::PICKUP: m_hitbox.flags = 0x000004C0; m_hitbox.halfExtent = 76; break;
+				case InstanceHitbox::PICKUP: m_hitbox.flags = 0x000004C0; m_hitbox.halfExtent = 76; m_hitbox.yOffset = 46; break;
 				case InstanceHitbox::SOLID_WALL: m_hitbox.flags = 0x026500A0; m_hitbox.halfExtent = 76; break;
 				case InstanceHitbox::STATIC_DECORATION: m_hitbox.flags = 0x000000C0; m_hitbox.halfExtent = 76; break;
 				}
@@ -421,7 +542,12 @@ void Instance::RenderUI(bool& shouldDelete, int index, std::unordered_map<std::s
 			ImGui::SetItemTooltip("Raw hitbox flags (editable with Custom type).\nBit 0x80: set = trigger-only (pass through), clear = solid collision.");
 		}
 
-		// Delete button
+		// Delete and Duplicate buttons
+		if (ImGui::Button("Duplicate Instance"))
+		{
+			shouldDuplicate = true;
+		}
+		ImGui::SameLine();
 		if (ImGui::Button("Delete Instance"))
 		{
 			shouldDelete = true;
@@ -1618,37 +1744,41 @@ void Level::RenderUI(Renderer& renderer)
 
 			// Show list of currently loaded models
 			ImGui::Separator();
-			ImGui::Text("Loaded Models (%zu)", m_importedModels.size());
-			ImGui::Separator();
-
-			if (!m_importedModels.empty())
+			if (ImGui::TreeNodeEx(("Loaded Models (" + std::to_string(m_importedModels.size()) + ")##modelsList").c_str(), 0))
 			{
-				std::string modelToDelete;
-				for (const auto& [modelName, modelData] : m_importedModels)
+				ImGui::Separator();
+
+				if (!m_importedModels.empty())
 				{
-					ImGui::PushID(modelName.c_str());
-					ImGui::Text("%s", modelName.c_str());
-					ImGui::SameLine();
-					ImGui::Text("(%zu bytes)", modelData.size());
-					ImGui::SameLine(ImGui::GetContentRegionAvail().x - 20);
-					if (ImGui::Button("X"))
+					std::string modelToDelete;
+					for (const auto& [modelName, modelData] : m_importedModels)
 					{
-						modelToDelete = modelName;
+						ImGui::PushID(modelName.c_str());
+						ImGui::Text("%s", modelName.c_str());
+						ImGui::SameLine();
+						ImGui::Text("(%zu bytes)", modelData.size());
+						ImGui::SameLine(ImGui::GetContentRegionAvail().x - 20);
+						if (ImGui::Button("X"))
+						{
+							modelToDelete = modelName;
+						}
+						ImGui::PopID();
 					}
-					ImGui::PopID();
+
+					// Delete the model after iteration to avoid iterator invalidation
+					if (!modelToDelete.empty())
+					{
+						m_importedModels.erase(modelToDelete);
+						m_logMessage = "Removed model: " + modelToDelete;
+						m_showLogWindow = true;
+					}
+				}
+				else
+				{
+					ImGui::TextDisabled("No models loaded");
 				}
 
-				// Delete the model after iteration to avoid iterator invalidation
-				if (!modelToDelete.empty())
-				{
-					m_importedModels.erase(modelToDelete);
-					m_logMessage = "Removed model: " + modelToDelete;
-					m_showLogWindow = true;
-				}
-			}
-			else
-			{
-				ImGui::TextDisabled("No models loaded");
+				ImGui::TreePop();
 			}
 
 			// Model Instances section
@@ -1677,15 +1807,122 @@ void Level::RenderUI(Renderer& renderer)
 				}
 			}
 
+			// Create Instance Row section
+			bool instanceRowCreated = false;
+			if (!m_instances.empty())
+			{
+				ImGui::Separator();
+				if (ImGui::TreeNodeEx("Create Instance Row", 0))
+				{
+					static int createRowInstanceIndex = 0;
+					static int createRowNumInstances = 4;
+					static float createRowSpacing = 4.5f;
+					static bool createRowDeleteAfter = false;
+					static ButtonUI createRowButton = ButtonUI();
+					static std::string createRowMessage;
+
+					if (createRowInstanceIndex >= static_cast<int>(m_instances.size()))
+						createRowInstanceIndex = static_cast<int>(m_instances.size()) - 1;
+
+					std::string preview = m_instances[createRowInstanceIndex].GetName();
+					if (preview.empty())
+						preview = "Instance " + std::to_string(createRowInstanceIndex + 1);
+
+					if (ImGui::BeginCombo("Source Instance", preview.c_str()))
+					{
+						for (size_t i = 0; i < m_instances.size(); i++)
+						{
+							bool isSelected = (createRowInstanceIndex == static_cast<int>(i));
+							std::string label = m_instances[i].GetName();
+							if (label.empty())
+								label = "Instance " + std::to_string(i + 1);
+							if (ImGui::Selectable(label.c_str(), isSelected))
+								createRowInstanceIndex = static_cast<int>(i);
+							if (isSelected)
+								ImGui::SetItemDefaultFocus();
+						}
+						ImGui::EndCombo();
+					}
+
+					ImGui::SetNextItemWidth(100.0f);
+					ImGui::InputInt("Count", &createRowNumInstances);
+					if (createRowNumInstances < 1) createRowNumInstances = 1;
+
+					ImGui::SetNextItemWidth(200.0f);
+					ImGui::DragFloat("Spacing", &createRowSpacing, 0.1f, 0.1f, 30.0f, "%.1f");
+
+					ImGui::Checkbox("Delete instance after", &createRowDeleteAfter);
+
+					int checkpointIndex = -1;
+					if (!m_rendererSelectedQuadblockIndexes.empty())
+					{
+						size_t qbIdx = m_rendererSelectedQuadblockIndexes.back();
+						if (qbIdx < m_quadblocks.size())
+							checkpointIndex = m_quadblocks[qbIdx].GetCheckpoint();
+					}
+
+					if (checkpointIndex < 0)
+					{
+						ImGui::BeginDisabled();
+					}
+
+					if (createRowButton.Show("Create Instance Row", createRowMessage, false))
+					{
+						if (checkpointIndex < 0 || checkpointIndex >= static_cast<int>(m_checkpoints.size()))
+						{
+							createRowMessage = "No valid checkpoint selected.";
+						}
+						else if (GenerateInstanceRow(checkpointIndex, createRowInstanceIndex, createRowNumInstances, createRowSpacing, createRowDeleteAfter))
+						{
+							createRowMessage = "Successfully created the instance row.";
+							if (createRowDeleteAfter)
+							{
+								m_closeInstanceIndex = -1;
+								m_openInstanceIndex = createRowInstanceIndex;
+							}
+							else
+							{
+								m_closeInstanceIndex = createRowInstanceIndex;
+								m_openInstanceIndex = createRowInstanceIndex + 1;
+							}
+							instanceRowCreated = true;
+						}
+						else
+						{
+							createRowMessage = "Failed creating the instance row.";
+						}
+					}
+
+					if (checkpointIndex < 0)
+					{
+						ImGui::EndDisabled();
+						if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+							ImGui::SetTooltip("Select a quadblock with a checkpoint assigned");
+					}
+
+					ImGui::TreePop();
+				}
+			}
+
 			// Show instances
 			int instanceToDelete = -1;
+			int instanceToDuplicate = -1;
 			for (size_t i = 0; i < m_instances.size(); i++)
 			{
+				// Auto-open/close for duplication
+				if (static_cast<int>(i) == m_closeInstanceIndex)
+					ImGui::SetNextItemOpen(false);
+				if (static_cast<int>(i) == m_openInstanceIndex)
+					ImGui::SetNextItemOpen(true);
+
 				ImGui::PushID(static_cast<int>(i));
 				bool shouldDelete = false;
-				m_instances[i].RenderUI(shouldDelete, static_cast<int>(i), m_importedModels, m_rendererQueryPoint);
+				bool shouldDuplicate = false;
+				m_instances[i].RenderUI(shouldDelete, shouldDuplicate, static_cast<int>(i), m_importedModels, m_rendererQueryPoint);
 				if (shouldDelete)
 					instanceToDelete = i;
+				if (shouldDuplicate)
+					instanceToDuplicate = i;
 				ImGui::PopID();
 			}
 
@@ -1693,6 +1930,51 @@ void Level::RenderUI(Renderer& renderer)
 			if (instanceToDelete >= 0)
 			{
 				m_instances.erase(m_instances.begin() + instanceToDelete);
+			}
+
+			// Duplicate instance after iteration
+			if (instanceRowCreated)
+			{
+				m_openInstanceIndex = -1;
+				m_closeInstanceIndex = -1;
+			}
+			else if (instanceToDuplicate >= 0)
+			{
+				m_closeInstanceIndex = instanceToDuplicate;
+				m_instances.push_back(m_instances[instanceToDuplicate]);
+				Instance& original = m_instances[instanceToDuplicate];
+				Instance& dup = m_instances.back();
+
+				// Append _2, _3, etc. to the name
+				std::string baseName = original.GetName();
+				std::string newName;
+				size_t underscorePos = baseName.rfind('_');
+				if (underscorePos != std::string::npos && underscorePos + 1 < baseName.size())
+				{
+					std::string suffix = baseName.substr(underscorePos + 1);
+					if (!suffix.empty() && std::all_of(suffix.begin(), suffix.end(), ::isdigit))
+					{
+						int num = std::stoi(suffix) + 1;
+						newName = baseName.substr(0, underscorePos + 1) + std::to_string(num);
+					}
+					else
+					{
+						newName = baseName + "_2";
+					}
+				}
+				else
+				{
+					newName = baseName + "_2";
+				}
+				dup.SetName(newName);
+
+				// Track for auto-open
+				m_openInstanceIndex = static_cast<int>(m_instances.size() - 1);
+			}
+			else
+			{
+				m_openInstanceIndex = -1;
+				m_closeInstanceIndex = -1;
 			}
 
 			if (m_instances.empty())

@@ -97,6 +97,7 @@ private:
 	std::vector<uint16_t> ReadRawVRAM(std::filesystem::path vrmPath);
 	void GenerateBotPathChangeCode();
 	bool GenerateSpawn(float colSpacing, float rowSpacing);
+	bool GenerateInstanceRow(int checkpointIndex, size_t instanceIndex, int numInstances, float spacing, bool deleteAfter);
 	bool GenerateCheckpoints();
 	bool GenerateBSP();
 
@@ -190,4 +191,6 @@ private:
 	std::vector<ModelTextureForVRM> m_modelTexturesInVRAM;
 
 	std::vector<Instance> m_instances;
+	int m_openInstanceIndex = -1;
+	int m_closeInstanceIndex = -1;
 };

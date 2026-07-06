@@ -6,7 +6,7 @@ Instance::Instance(std::string model)
 	m_scale = Vec3(1.0f, 1.0f, 1.0f);
 	m_pos = Vec3(0.0f, 0.0f, 0.0f);
 	m_rot = Vec3(0.0f, 0.0f, 0.0f);
-	m_modelID = 0xFFFFFFFF;
+	m_modelID = ModelId::NONE;
 	m_color = Color(0.0f, 0.0f, 0.0f);
 	m_modelName = model;
 	m_flags = 0xB;
@@ -31,7 +31,7 @@ std::vector<uint8_t> Instance::Serialize() const
 	inst.offInstance = 0; // Probably unused data
 	inst.pos = ConvertVec3(m_pos, FP_ONE_GEO);
 	inst.rot = ConvertAngle(m_rot);
-	inst.modelID = m_modelID;
+	inst.modelID = static_cast<int32_t>(m_modelID);
 
 	std::vector<uint8_t> result(sizeof(PSX::InstDef));
 	std::memcpy(result.data(), &inst, sizeof(PSX::InstDef));
