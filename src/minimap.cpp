@@ -75,11 +75,24 @@ void MinimapConfig::LoadTextures()
 	{
 		topTexture = Texture(topTexturePath);
 		hasTopTexture = !topTexture.IsEmpty();
+		// Use additive blending so black pixels become transparent in-game
+		// (PSX rendering: 1.0 x Back + 1.0 x Front, so black adds nothing)
+		// Also enable color-key transparency so black (0x0000) is fully transparent
+		if (hasTopTexture)
+		{
+			topTexture.SetBlendMode(PSX::BlendMode::ADDITIVE);
+			topTexture.EnableColorKeyTransparency();
+		}
 	}
 	if (!bottomTexturePath.empty() && std::filesystem::exists(bottomTexturePath))
 	{
 		bottomTexture = Texture(bottomTexturePath);
 		hasBottomTexture = !bottomTexture.IsEmpty();
+		if (hasBottomTexture)
+		{
+			bottomTexture.SetBlendMode(PSX::BlendMode::ADDITIVE);
+			bottomTexture.EnableColorKeyTransparency();
+		}
 	}
 }
 
@@ -210,6 +223,12 @@ bool MinimapConfig::RenderUI(const std::vector<Quadblock>& quadblocks)
 			topTexturePath = selection.front();
 			topTexture = Texture(topTexturePath);
 			hasTopTexture = !topTexture.IsEmpty();
+			// Use additive blending and color-key transparency for black pixels
+			if (hasTopTexture)
+			{
+				topTexture.SetBlendMode(PSX::BlendMode::ADDITIVE);
+				topTexture.EnableColorKeyTransparency();
+			}
 		}
 	}
 	ImGui::SameLine();
@@ -237,6 +256,12 @@ bool MinimapConfig::RenderUI(const std::vector<Quadblock>& quadblocks)
 			bottomTexturePath = selection.front();
 			bottomTexture = Texture(bottomTexturePath);
 			hasBottomTexture = !bottomTexture.IsEmpty();
+			// Use additive blending and color-key transparency for black pixels
+			if (hasBottomTexture)
+			{
+				bottomTexture.SetBlendMode(PSX::BlendMode::ADDITIVE);
+				bottomTexture.EnableColorKeyTransparency();
+			}
 		}
 	}
 	ImGui::SameLine();
