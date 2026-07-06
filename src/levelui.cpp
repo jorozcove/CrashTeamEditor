@@ -441,7 +441,7 @@ void Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, st
 
 		ImGui::Text("Pos:");
 		ImGui::SameLine();
-		ImGui::InputFloat3("##pos", m_pos.Data());
+		ImGui::DragFloat3("##pos", m_pos.Data(), 0.5f);
 		ImGui::SameLine();
 		if (ImGui::Button(("Set from selection##Instance")))
 		{
@@ -449,7 +449,7 @@ void Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, st
 		}
 
 		ImGui::Text("Rot:"); ImGui::SameLine();
-		if (ImGui::InputFloat3("##rot", m_rot.Data()))
+		if (ImGui::DragFloat3("##rot", m_rot.Data(), 1.0f, -360.0f, 360.0f))
 		{
 			m_rot.x = Clamp(m_rot.x, -360.0f, 360.0f);
 			m_rot.y = Clamp(m_rot.y, -360.0f, 360.0f);
@@ -1744,37 +1744,41 @@ void Level::RenderUI(Renderer& renderer)
 
 			// Show list of currently loaded models
 			ImGui::Separator();
-			ImGui::Text("Loaded Models (%zu)", m_importedModels.size());
-			ImGui::Separator();
-
-			if (!m_importedModels.empty())
+			if (ImGui::TreeNodeEx(("Loaded Models (" + std::to_string(m_importedModels.size()) + ")##modelsList").c_str(), 0))
 			{
-				std::string modelToDelete;
-				for (const auto& [modelName, modelData] : m_importedModels)
+				ImGui::Separator();
+
+				if (!m_importedModels.empty())
 				{
-					ImGui::PushID(modelName.c_str());
-					ImGui::Text("%s", modelName.c_str());
-					ImGui::SameLine();
-					ImGui::Text("(%zu bytes)", modelData.size());
-					ImGui::SameLine(ImGui::GetContentRegionAvail().x - 20);
-					if (ImGui::Button("X"))
+					std::string modelToDelete;
+					for (const auto& [modelName, modelData] : m_importedModels)
 					{
-						modelToDelete = modelName;
+						ImGui::PushID(modelName.c_str());
+						ImGui::Text("%s", modelName.c_str());
+						ImGui::SameLine();
+						ImGui::Text("(%zu bytes)", modelData.size());
+						ImGui::SameLine(ImGui::GetContentRegionAvail().x - 20);
+						if (ImGui::Button("X"))
+						{
+							modelToDelete = modelName;
+						}
+						ImGui::PopID();
 					}
-					ImGui::PopID();
+
+					// Delete the model after iteration to avoid iterator invalidation
+					if (!modelToDelete.empty())
+					{
+						m_importedModels.erase(modelToDelete);
+						m_logMessage = "Removed model: " + modelToDelete;
+						m_showLogWindow = true;
+					}
+				}
+				else
+				{
+					ImGui::TextDisabled("No models loaded");
 				}
 
-				// Delete the model after iteration to avoid iterator invalidation
-				if (!modelToDelete.empty())
-				{
-					m_importedModels.erase(modelToDelete);
-					m_logMessage = "Removed model: " + modelToDelete;
-					m_showLogWindow = true;
-				}
-			}
-			else
-			{
-				ImGui::TextDisabled("No models loaded");
+				ImGui::TreePop();
 			}
 
 			// Model Instances section
@@ -1800,6 +1804,103 @@ void Level::RenderUI(Renderer& renderer)
 				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
 				{
 					ImGui::SetTooltip("Import a model first");
+				}
+			}
+
+			// Create Instance Row section
+			bool instanceRowCreated = false;
+			if (!m_instances.empty())
+			{
+				ImGui::Separator();
+				if (ImGui::TreeNodeEx("Create Instance Row", 0))
+				{
+					static int createRowInstanceIndex = 0;
+					static int createRowNumInstances = 4;
+					static float createRowSpacing = 4.5f;
+					static bool createRowDeleteAfter = false;
+					static ButtonUI createRowButton = ButtonUI();
+					static std::string createRowMessage;
+
+					if (createRowInstanceIndex >= static_cast<int>(m_instances.size()))
+						createRowInstanceIndex = static_cast<int>(m_instances.size()) - 1;
+
+					std::string preview = m_instances[createRowInstanceIndex].GetName();
+					if (preview.empty())
+						preview = "Instance " + std::to_string(createRowInstanceIndex + 1);
+
+					if (ImGui::BeginCombo("Source Instance", preview.c_str()))
+					{
+						for (size_t i = 0; i < m_instances.size(); i++)
+						{
+							bool isSelected = (createRowInstanceIndex == static_cast<int>(i));
+							std::string label = m_instances[i].GetName();
+							if (label.empty())
+								label = "Instance " + std::to_string(i + 1);
+							if (ImGui::Selectable(label.c_str(), isSelected))
+								createRowInstanceIndex = static_cast<int>(i);
+							if (isSelected)
+								ImGui::SetItemDefaultFocus();
+						}
+						ImGui::EndCombo();
+					}
+
+					ImGui::SetNextItemWidth(100.0f);
+					ImGui::InputInt("Count", &createRowNumInstances);
+					if (createRowNumInstances < 1) createRowNumInstances = 1;
+
+					ImGui::SetNextItemWidth(200.0f);
+					ImGui::DragFloat("Spacing", &createRowSpacing, 0.1f, 0.1f, 30.0f, "%.1f");
+
+					ImGui::Checkbox("Delete instance after", &createRowDeleteAfter);
+
+					int checkpointIndex = -1;
+					if (!m_rendererSelectedQuadblockIndexes.empty())
+					{
+						size_t qbIdx = m_rendererSelectedQuadblockIndexes.back();
+						if (qbIdx < m_quadblocks.size())
+							checkpointIndex = m_quadblocks[qbIdx].GetCheckpoint();
+					}
+
+					if (checkpointIndex < 0)
+					{
+						ImGui::BeginDisabled();
+					}
+
+					if (createRowButton.Show("Create Instance Row", createRowMessage, false))
+					{
+						if (checkpointIndex < 0 || checkpointIndex >= static_cast<int>(m_checkpoints.size()))
+						{
+							createRowMessage = "No valid checkpoint selected.";
+						}
+						else if (GenerateInstanceRow(checkpointIndex, createRowInstanceIndex, createRowNumInstances, createRowSpacing, createRowDeleteAfter))
+						{
+							createRowMessage = "Successfully created the instance row.";
+							if (createRowDeleteAfter)
+							{
+								m_closeInstanceIndex = -1;
+								m_openInstanceIndex = createRowInstanceIndex;
+							}
+							else
+							{
+								m_closeInstanceIndex = createRowInstanceIndex;
+								m_openInstanceIndex = createRowInstanceIndex + 1;
+							}
+							instanceRowCreated = true;
+						}
+						else
+						{
+							createRowMessage = "Failed creating the instance row.";
+						}
+					}
+
+					if (checkpointIndex < 0)
+					{
+						ImGui::EndDisabled();
+						if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+							ImGui::SetTooltip("Select a quadblock with a checkpoint assigned");
+					}
+
+					ImGui::TreePop();
 				}
 			}
 
@@ -1832,7 +1933,12 @@ void Level::RenderUI(Renderer& renderer)
 			}
 
 			// Duplicate instance after iteration
-			if (instanceToDuplicate >= 0)
+			if (instanceRowCreated)
+			{
+				m_openInstanceIndex = -1;
+				m_closeInstanceIndex = -1;
+			}
+			else if (instanceToDuplicate >= 0)
 			{
 				m_closeInstanceIndex = instanceToDuplicate;
 				m_instances.push_back(m_instances[instanceToDuplicate]);

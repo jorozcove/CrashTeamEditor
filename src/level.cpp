@@ -281,6 +281,75 @@ bool Level::GenerateSpawn(float colSpacing, float rowSpacing)
 	return true;
 }
 
+bool Level::GenerateInstanceRow(int checkpointIndex, size_t instanceIndex, int numInstances, float spacing, bool deleteAfter)
+{
+	if (m_checkpoints.empty())
+		return false;
+	if (instanceIndex >= m_instances.size())
+		return false;
+	if (checkpointIndex < 0 || checkpointIndex >= static_cast<int>(m_checkpoints.size()))
+		return false;
+	if (numInstances < 1)
+		return false;
+
+	const Checkpoint& cp = m_checkpoints[checkpointIndex];
+	Vec3 center = cp.GetPos();
+
+	int down = cp.GetDown();
+	int up = cp.GetUp();
+	Vec3 forward;
+	if (down != NONE_CHECKPOINT_INDEX && down >= 0 && down < static_cast<int>(m_checkpoints.size()))
+		forward = m_checkpoints[down].GetPos() - center;
+	else if (up != NONE_CHECKPOINT_INDEX && up >= 0 && up < static_cast<int>(m_checkpoints.size()))
+		forward = center - m_checkpoints[up].GetPos();
+	else
+		forward = Vec3(0.0f, 0.0f, 1.0f);
+
+	Vec3 upVec = { 0.0f, 1.0f, 0.0f };
+	forward.y = 0;
+	float yaw = -std::atan2(forward.z, forward.x) * (180.0f / 3.14159265f);
+	yaw = std::fmod(yaw, 360.0f);
+	forward.Normalize();
+	Vec3 right = forward.Cross(upVec);
+
+	Instance original = m_instances[instanceIndex];
+	size_t insertPos = instanceIndex + 1;
+
+	for (int col = 0; col < numInstances; col++)
+	{
+		float lateralOffset = (col - (numInstances - 1) * 0.5f) * spacing;
+		Vec3 pos = center + right * lateralOffset;
+
+		Instance newInstance = original;
+
+		std::string baseName = original.GetName();
+		std::string desiredName = baseName + "_row" + std::to_string(col + 1);
+		std::string finalName = desiredName;
+		int suffix = 2;
+		auto nameExists = [&](const std::string& name)
+		{
+			for (const auto& inst : m_instances)
+				if (inst.GetName() == name) return true;
+			return false;
+		};
+		while (nameExists(finalName))
+			finalName = desiredName + "_" + std::to_string(suffix++);
+		newInstance.SetName(finalName);
+
+		newInstance.SetPos(pos);
+		newInstance.SetRot(Vec3(0.0f, yaw, 0.0f));
+
+		m_instances.insert(m_instances.begin() + insertPos + col, newInstance);
+	}
+
+	if (deleteAfter)
+	{
+		m_instances.erase(m_instances.begin() + instanceIndex);
+	}
+
+	return true;
+}
+
 bool Level::GenerateBSP()
 {
 	std::vector<size_t> quadIndexes;
