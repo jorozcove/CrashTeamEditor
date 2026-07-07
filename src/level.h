@@ -95,6 +95,7 @@ private:
 	bool SetGhostData(const std::filesystem::path& path, bool tropy);
 	bool UpdateVRM();
 	std::vector<uint16_t> ReadRawVRAM(std::filesystem::path vrmPath);
+	std::vector<uint8_t> SerializeModel(const std::string& modelName, std::unordered_map<std::string, size_t>& modelOffsets);
 	void GenerateBotPathChangeCode();
 	bool GenerateSpawn(float colSpacing, float rowSpacing);
 	bool GenerateInstanceRow(int checkpointIndex, size_t instanceIndex, int numInstances, float spacing, bool deleteAfter);
