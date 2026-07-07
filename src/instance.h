@@ -18,8 +18,8 @@ struct InstanceHitbox
 	bool enabled = false;
 	int preset = Preset::PICKUP;
 	uint32_t flags = 0x000004C0; // vanilla pickup flags (bit 0x80 set = trigger-only)
-	int16_t halfExtent = 76; // vanilla pickup trigger radius
-	int16_t yOffset = 0; // hitbox center offset above InstDef position
+	float halfExtent = 1.1875f; // vanilla pickup trigger radius
+	float yOffset = 0; // hitbox center offset above InstDef position
 };
 
 
@@ -350,6 +350,7 @@ public:
 
 	void RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, std::unordered_map<std::string, std::vector<uint8_t>>& importedModels, Vec3& queryPoint);
 	std::vector<uint8_t> Serialize() const;
+	std::vector<uint8_t> SerializeHitbox(uint32_t insatnceOffset) const;
 private:
 	std::string m_name;
 	Vec3 m_scale;

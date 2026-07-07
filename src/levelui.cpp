@@ -426,7 +426,7 @@ void Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, st
 				{
 					m_hitbox.enabled = true;
 					m_hitbox.preset = InstanceHitbox::PICKUP;
-					m_hitbox.yOffset = 0;
+					m_hitbox.yOffset = 0.0f;
 				}
 				else if (m_modelID == ModelId::EXPLOSIVE_CRATE || m_modelID == ModelId::FRUIT_CRATE ||
 				         m_modelID == ModelId::RANDOM_CRATE || m_modelID == ModelId::TIME_CRATE_1 ||
@@ -434,7 +434,7 @@ void Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, st
 				{
 					m_hitbox.enabled = true;
 					m_hitbox.preset = InstanceHitbox::PICKUP;
-					m_hitbox.yOffset = 46;
+					m_hitbox.yOffset = 0.71875f;
 				}
 			}
 		}
@@ -514,27 +514,25 @@ void Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, st
 			{
 				switch (m_hitbox.preset)
 				{
-				case InstanceHitbox::PICKUP: m_hitbox.flags = 0x000004C0; m_hitbox.halfExtent = 76; m_hitbox.yOffset = 46; break;
-				case InstanceHitbox::SOLID_WALL: m_hitbox.flags = 0x026500A0; m_hitbox.halfExtent = 76; break;
-				case InstanceHitbox::STATIC_DECORATION: m_hitbox.flags = 0x000000C0; m_hitbox.halfExtent = 76; break;
+				case InstanceHitbox::PICKUP: m_hitbox.flags = 0x000004C0; m_hitbox.halfExtent = 1.1875f; m_hitbox.yOffset = 0.71875f; break;
+				case InstanceHitbox::SOLID_WALL: m_hitbox.flags = 0x026500A0; m_hitbox.halfExtent = 1.1875f; break;
+				case InstanceHitbox::STATIC_DECORATION: m_hitbox.flags = 0x000000C0; m_hitbox.halfExtent = 1.1875f; break;
 				}
 			}
 			ImGui::SetItemTooltip("Pickup: trigger-only, vanilla crate radius.\nSolid Wall: blocks the kart.\nStatic Decoration: small solid collider.\nCustom: edit the raw flags yourself.");
 
-			int halfExtent = m_hitbox.halfExtent;
-			if (ImGui::InputInt("Half Extent", &halfExtent))
+			float halfExtent = m_hitbox.halfExtent;
+			if (ImGui::InputFloat("Half Extent", &halfExtent))
 			{
-				// halfExtent^2 must fit in int16, so cap at 181
-				m_hitbox.halfExtent = static_cast<int16_t>(std::clamp(halfExtent, 1, 181));
+				// halfExtent^2 serialized must fit in int16, so cap at sqrt(2**15)/64
+				m_hitbox.halfExtent = Clamp(halfExtent, 0.0f, 2.828125f);
 			}
-			ImGui::SetItemTooltip("Hitbox radius around the instance position (vanilla crates use 76).\nMax 181 since the squared value must fit in 16 bits.");
+			ImGui::SetItemTooltip("Hitbox radius around the instance position (vanilla crates use 1.18).\nMax 2.82 since the squared value must fit in 16 bits.");
 
-			int yOffset = m_hitbox.yOffset;
-			if (ImGui::InputInt("Hitbox Y Offset", &yOffset))
-			{
-				m_hitbox.yOffset = static_cast<int16_t>(std::clamp(yOffset, -32000, 32000));
-			}
-			ImGui::SetItemTooltip("Raises the hitbox center above the instance position.\nVanilla crates use ~46 so karts overlap at chest height.");
+			ImGui::InputFloat("Hitbox Y Offset", &m_hitbox.yOffset);
+		
+			
+			ImGui::SetItemTooltip("Raises the hitbox center above the instance position.\nVanilla crates use ~0.71 so karts overlap at chest height.");
 
 			ImGui::BeginDisabled(m_hitbox.preset != InstanceHitbox::CUSTOM);
 			ImGui::InputScalar("Hitbox Flags", ImGuiDataType_U32, &m_hitbox.flags, nullptr, nullptr, "%08X", ImGuiInputTextFlags_CharsHexadecimal);
