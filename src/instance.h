@@ -347,7 +347,7 @@ public:
 	InstanceHitbox& GetHitbox() { return m_hitbox; }
 	void SetHitbox(const InstanceHitbox& hitbox) { m_hitbox = hitbox; }
 
-
+	BoundingBox ComputeBBox();
 	void RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, std::unordered_map<std::string, std::vector<uint8_t>>& importedModels, Vec3& queryPoint);
 	std::vector<uint8_t> Serialize() const;
 	std::vector<uint8_t> SerializeHitbox(uint32_t insatnceOffset) const;

@@ -38,6 +38,16 @@ std::vector<uint8_t> Instance::Serialize() const
 	return buffer;
 }
 
+BoundingBox Instance::ComputeBBox()
+{
+	Vec3 center = m_pos + Vec3(0.0f, m_hitbox.yOffset, 0.0f);
+	Vec3 half_ext = Vec3(m_hitbox.halfExtent, m_hitbox.halfExtent, m_hitbox.halfExtent);
+	BoundingBox bbox{};
+	bbox.min = center - half_ext;
+	bbox.max = center + half_ext;
+	return bbox;
+}
+
 
 std::vector<uint8_t> Instance::SerializeHitbox(uint32_t insatnceOffset) const
 {	// Don't call on Instances that have hitbox disabled. 

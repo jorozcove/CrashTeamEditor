@@ -2477,7 +2477,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 		if (m_botPaths[i].IsValid())
 		{
 			navTable.offAIPathArray[i] = currOffset;
-			serializedBotPaths.push_back(m_botPaths[i].Serialize());
+			serializedBotPaths.push_back(m_botPaths[i].Serialize(m_instances));
 			currOffset += serializedBotPaths.back().size();
 		}
 		else
