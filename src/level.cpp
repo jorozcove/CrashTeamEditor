@@ -2548,7 +2548,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	header.offLevNavTable = static_cast<uint32_t>(offNavTable);
 	
 	// Set skybox pointer in header if enabled
-	if (m_skybox.IsReady())
+	if (!skyboxData.empty())
 	{
 		header.offSkybox = static_cast<uint32_t>(offSkyboxData);
 	}
@@ -2699,6 +2699,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 			leafOffsetHitbox.push_back(nodeFileOffset);
 		}
 	}
+	
 
 	size_t paddingSizeForMultOfFour = (4 - (currOffset % 4)) % 4;
 	printf(nameof(paddingSizeForMultOfFour) " = %zx\n", paddingSizeForMultOfFour);
@@ -2862,15 +2863,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	Write(file, visMemQuadsP1.data(), visMemQuadsP1.size() * sizeof(uint32_t));
 	Write(file, visMemBSPP1.data(), visMemBSPP1.size() * sizeof(uint32_t));
 	Write(file, &visMem, sizeof(visMem));
-
-	// Write skybox data immediately after visMem, matching the offset accounting
-	// above (offSkyboxData = currOffset right after sizeof(visMem)). The rebase onto
-	// the skybox-enabled main left this write at the end of the file while the
-	// accounting kept it here, corrupting header.offSkybox and every instance/model
-	// /hitbox offset that follows.
 	if (!skyboxData.empty()) { Write(file, skyboxData.data(), skyboxData.size()); }
-
-	// Write InstDefs
 	for (const std::vector<uint8_t>& inst : serializedInstDef) { Write(file, inst.data(), inst.size()); }
 
 	// Write InstDef pointer arrays (NULL-terminated, stored offsets - game adds 4 to get actual position)
