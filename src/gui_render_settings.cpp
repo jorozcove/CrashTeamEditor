@@ -27,6 +27,7 @@ bool GuiRenderSettings::showBots = false;
 bool GuiRenderSettings::filterActive = true;
 bool GuiRenderSettings::showSelectedQuadblockInfo = true;
 bool GuiRenderSettings::showSkybox = true;
+bool GuiRenderSettings::showInstances = true;
 Color GuiRenderSettings::defaultFilterColor = Color(static_cast<unsigned char>(255), static_cast<unsigned char>(128), static_cast<unsigned char>(0));
 Color GuiRenderSettings::selectedCheckpointColor = Color(static_cast<unsigned char>(0), static_cast < unsigned char>(255), static_cast < unsigned char>(255));
 int GuiRenderSettings::renderType = 0;

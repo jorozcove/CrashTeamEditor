@@ -20,6 +20,13 @@ public:
 	bool RemoveModel(Model* model);
 	void Clear(bool models);
 	bool IsReady() const;
+	size_t GetModelCount() const { return m_child.size(); }
+	Model* GetModel(size_t index) const {
+		if (index >= m_child.size()) return nullptr;
+		auto it = m_child.begin();
+		std::advance(it, index);
+		return *it;
+	}
 
 private:
 	Mesh m_mesh;

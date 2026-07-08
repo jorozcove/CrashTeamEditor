@@ -348,7 +348,7 @@ public:
 	void SetHitbox(const InstanceHitbox& hitbox) { m_hitbox = hitbox; }
 
 
-	void RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, std::unordered_map<std::string, std::vector<uint8_t>>& importedModels, Vec3& queryPoint);
+	bool RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, std::unordered_map<std::string, std::vector<uint8_t>>& importedModels, Vec3& queryPoint); // returns true if model changed
 	std::vector<uint8_t> Serialize() const;
 private:
 	std::string m_name;

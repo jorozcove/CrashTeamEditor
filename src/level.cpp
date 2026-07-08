@@ -16,9 +16,13 @@
 #include <iostream>
 #include <fstream>
 #include <unordered_set>
+#include <array>
+#include <system_error>
 #include <set>
 #include <map>
 #include <algorithm>
+#include <cstring>
+#include <stb_image_write.h>
 
 bool Level::Load(const std::filesystem::path& filename, bool isLevel)
 {
@@ -97,6 +101,16 @@ void Level::Clear(bool clearErrors)
 	m_splitLines[0] = 0.0;
 	m_splitLines[1] = 0.0;
 	m_jumpYSpeedCap = 0;
+	m_instances.clear();
+	m_importedModels.clear();
+	m_parsedModelCache.clear();
+	m_levData.clear();
+	m_vramData.clear();
+	std::error_code ec;
+	std::filesystem::remove_all(std::filesystem::temp_directory_path() / "CTE_tex_cache", ec);
+
+	m_openInstanceIndex = -1;
+	m_closeInstanceIndex = -1;
 	for (int i = 0; i < 3; i++)
 	{
 		m_botPaths[i].Clear();
@@ -235,6 +249,11 @@ Model* Level::GetFilterModel()
 	return m_models[LevelModels::FILTER];
 }
 
+Model* Level::GetInstancesModel()
+{
+	return m_models[LevelModels::INSTANCES];
+}
+
 
 bool Level::GenerateSpawn(float colSpacing, float rowSpacing)
 {
@@ -281,6 +300,37 @@ bool Level::GenerateSpawn(float colSpacing, float rowSpacing)
 	return true;
 }
 
+std::string Level::GenerateUniqueInstanceName(const std::string& name) const
+{
+	std::string stripped = name;
+	size_t hashPos = stripped.rfind('#');
+	if (hashPos != std::string::npos && hashPos + 1 < stripped.size())
+	{
+		std::string suffix = stripped.substr(hashPos + 1);
+		if (!suffix.empty() && std::all_of(suffix.begin(), suffix.end(), ::isdigit))
+			stripped = stripped.substr(0, hashPos);
+	}
+
+	int maxN = 0;
+	for (const auto& inst : m_instances)
+	{
+		const std::string& n = inst.GetName();
+		if (n.size() > stripped.size() + 1 &&
+			n.compare(0, stripped.size(), stripped) == 0 &&
+			n[stripped.size()] == '#')
+		{
+			std::string suffix = n.substr(stripped.size() + 1);
+			if (!suffix.empty() && std::all_of(suffix.begin(), suffix.end(), ::isdigit))
+			{
+				int val = std::stoi(suffix);
+				if (val > maxN) maxN = val;
+			}
+		}
+	}
+
+	return stripped + "#" + std::to_string(maxN + 1);
+}
+
 bool Level::GenerateInstanceRow(int checkpointIndex, size_t instanceIndex, int numInstances, float spacing, bool deleteAfter)
 {
 	if (m_checkpoints.empty())
@@ -322,19 +372,7 @@ bool Level::GenerateInstanceRow(int checkpointIndex, size_t instanceIndex, int n
 
 		Instance newInstance = original;
 
-		std::string baseName = original.GetName();
-		std::string desiredName = baseName + "_row" + std::to_string(col + 1);
-		std::string finalName = desiredName;
-		int suffix = 2;
-		auto nameExists = [&](const std::string& name)
-		{
-			for (const auto& inst : m_instances)
-				if (inst.GetName() == name) return true;
-			return false;
-		};
-		while (nameExists(finalName))
-			finalName = desiredName + "_" + std::to_string(suffix++);
-		newInstance.SetName(finalName);
+		newInstance.SetName(GenerateUniqueInstanceName(original.GetName()));
 
 		newInstance.SetPos(pos);
 		newInstance.SetRot(Vec3(0.0f, yaw, 0.0f));
@@ -1127,10 +1165,29 @@ void Level::ManageTurbopad(Quadblock& quadblock)
 }
 
 
+// Build a .ctrmodel binary from raw LEV data and save it to outputPath
+// Returns true on success
 bool Level::LoadLEV(const std::filesystem::path& levFile)
 {
 	std::ifstream file(levFile, std::ios::binary);
 	if (!file.is_open()) return false;
+
+	// Read entire LEV file into memory for direct model access
+	file.seekg(0, std::ios::end);
+	size_t levSize = file.tellg();
+	file.seekg(0, std::ios::beg);
+	m_levData.resize(levSize);
+	file.read(reinterpret_cast<char*>(m_levData.data()), levSize);
+
+	// Read VRM for model texture extraction
+	{
+		std::filesystem::path vrmPath = levFile;
+		vrmPath.replace_extension(".vrm");
+		m_vramData = ReadRawVRAM(vrmPath);
+	}
+
+	// Reset file position for existing loading logic
+	file.seekg(0, std::ios::beg);
 
 	m_hasRawTexture = true;
 
@@ -1776,12 +1833,140 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		}
 	}
 
-	//Load model and instances TODO
-	
+	//Load instances from .lev
+	std::unordered_set<uint32_t> uniqueModelOffsets;
+	std::vector<PSX::Vec3> instPSXPos;
+	std::vector<uint32_t> instPtrs;
+	if (header.numInstances > 0 && header.offModelInstances != 0)
+	{
+		instPSXPos.reserve(header.numInstances);
+		file.seekg(offLev + std::streampos(header.offModelInstances));
+		instPtrs.resize(header.numInstances);
+		for (uint32_t i = 0; i < header.numInstances; i++)
+		{
+			Read(file, instPtrs[i]);
+		}
+
+		for (uint32_t i = 0; i < header.numInstances; i++)
+		{
+			if (instPtrs[i] == 0) { break; }
+
+			file.seekg(offLev + std::streampos(instPtrs[i]));
+			PSX::InstDef psxInst = {};
+			Read(file, psxInst);
+
+			Instance inst("");
+			inst.SetName(std::string(psxInst.name, strnlen(psxInst.name, sizeof(psxInst.name))));
+			inst.SetScale(ConvertPSXVec3(psxInst.scale, FP_ONE));
+			inst.SetPos(ConvertPSXVec3(psxInst.pos, FP_ONE_GEO));
+			inst.SetRot(ConvertPSXAngle(psxInst.rot));
+			inst.SetModelID(static_cast<ModelId>(psxInst.modelID));
+			inst.SetColor(ConvertColor(psxInst.colorRGBA));
+			inst.SetFlags(psxInst.flags);
+			inst.SetUnk24(psxInst.unk24);
+			inst.SetUnk28(psxInst.unk28);
+
+			// Look up model name from model data
+			if (psxInst.offModel != 0)
+			{
+				uniqueModelOffsets.insert(psxInst.offModel);
+				file.seekg(offLev + std::streampos(psxInst.offModel));
+				PSX::Model psxModel = {};
+				Read(file, psxModel);
+				std::string modelName(psxModel.name, strnlen(psxModel.name, sizeof(psxModel.name)));
+				if (!modelName.empty())
+				{
+					inst.SetModelName(modelName);
+				}
+				else
+				{
+					// Use synthetic name based on offset
+					inst.SetModelName("LEV_Model_0x" + std::to_string(psxInst.offModel));
+				}
+			}
+
+			instPSXPos.push_back(psxInst.pos);
+			m_instances.push_back(inst);
+		}
+	}
+
+	// Load instance hitbox data from BSP leaf offHitbox lists
+	if (!m_instances.empty())
+	{
+		std::vector<const BSP*> bspLeaves = m_bsp.GetLeaves();
+		for (const BSP* leaf : bspLeaves)
+		{
+			uint32_t offHitbox = leaf->GetOffHitbox();
+			if (offHitbox == 0) continue;
+
+			const uint8_t* hitboxData = m_levData.data() + 4 + offHitbox;
+			for (size_t hi = 0; ; hi++)
+			{
+				PSX::InstHitbox hitbox = {};
+				std::memcpy(&hitbox, hitboxData + hi * sizeof(PSX::InstHitbox), sizeof(PSX::InstHitbox));
+				if (hitbox.flags == 0 && hitbox.offInstDef == 0)
+					break;
+				for (size_t i = 0; i < m_instances.size(); i++)
+				{
+					if (i >= instPSXPos.size()) continue;
+					if (instPtrs[i] == hitbox.offInstDef)
+					{
+						InstanceHitbox ihb;
+						ihb.enabled = true;
+						ihb.flags = hitbox.flags;
+						ihb.halfExtent = hitbox.halfExtent;
+						ihb.yOffset = hitbox.center.y - instPSXPos[i].y;
+						m_instances[i].SetHitbox(ihb);
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	// Auto-extract models from LEV data into .ctrmodel files and import them
+	if (!uniqueModelOffsets.empty() && !m_levData.empty())
+	{
+		std::filesystem::path modelCacheDir = levFile.parent_path() / "extracted_models";
+		std::filesystem::create_directories(modelCacheDir);
+
+		// Extract all models using existing LevDataExtractor
+		{
+			std::filesystem::path extVrmPath = levFile;
+			extVrmPath.replace_extension(".vrm");
+			LevDataExtractor extractor(levFile, extVrmPath);
+			extractor.ExtractModels();
+		}
+
+		for (uint32_t modelOff : uniqueModelOffsets)
+		{
+			if (modelOff == 0) continue;
+
+			// Read model name from LEV data
+			PSX::Model psxModel;
+			memcpy(&psxModel, m_levData.data() + 4 + modelOff, sizeof(PSX::Model));
+			std::string modelName(psxModel.name, strnlen(psxModel.name, sizeof(psxModel.name)));
+			if (modelName.empty())
+				modelName = "LEV_Model_0x" + std::to_string(modelOff);
+
+			// Skip if already imported
+			if (m_importedModels.find(modelName) != m_importedModels.end())
+				continue;
+
+			std::filesystem::path ctrmodelPath = modelCacheDir / (modelName + ".ctrmodel");
+			if (!std::filesystem::exists(ctrmodelPath))
+				continue;
+
+			// Import the .ctrmodel (reads file into m_importedModels)
+			ImportModel(ctrmodelPath);
+		}
+	}
+
 
 	m_loaded = true;
 	file.close();
 	GenerateRenderLevData();
+	GenerateRenderInstanceData();
 	return true;
 }
 
@@ -2598,6 +2783,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	{
 		pointerMap.push_back(static_cast<uint32_t>(offInstDefList_ptrArray + (i * sizeof(uint32_t))));
 		pointerMap.push_back(static_cast<uint32_t>(offInstDefList2_ptrArray + (i * sizeof(uint32_t))));
+		pointerMap.push_back(static_cast<uint32_t>(offInstDefList3_ptrArray + (i * sizeof(uint32_t))));
 	}
 
 	for (size_t i = 0; i < modelOrder.size(); i++)
@@ -2670,7 +2856,9 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 		if (orderedBSPNodes[i]->IsBranch()) { offCurrNode += serializedBSPs[i].size(); continue; }
 		size_t visMemListIndex = 2 * i + 1;
 		visMemBSPP1[visMemListIndex] = static_cast<uint32_t>(offCurrNode);
+		visMemBSPP1[visMemListIndex - 1] = static_cast<uint32_t>(offInstDefList2_ptrArray);
 		pointerMap.push_back(static_cast<uint32_t>(offVisMemBSPP1 + visMemListIndex * sizeof(uint32_t)));
+		pointerMap.push_back(static_cast<uint32_t>(offVisMemBSPP1 + (visMemListIndex - 1) * sizeof(uint32_t)));
 		pointerMap.push_back(CALCULATE_OFFSET(PSX::BSPLeaf, offQuads, offCurrNode));
 		offCurrNode += serializedBSPs[i].size();
 	}
@@ -3856,6 +4044,9 @@ void Level::InitModels(Renderer& renderer)
 
 	m_models[LevelModels::BOT] = m_models[LevelModels::LEVEL]->AddModel();
 	m_models[LevelModels::BOT]->SetRenderCondition([]() { return GuiRenderSettings::showBots; });
+
+	m_models[LevelModels::INSTANCES] = m_models[LevelModels::LEVEL]->AddModel();
+	m_models[LevelModels::INSTANCES]->SetRenderCondition([]() { return GuiRenderSettings::showInstances; });
 }
 
 void Level::GenerateRenderLevData()
@@ -4085,6 +4276,534 @@ void Level::UpdateRenderBotData()
 		Mesh::RenderFlags::DrawBackfaces | Mesh::RenderFlags::DontOverrideRenderFlags
 	);
 }
+
+
+// Decode PSX texture pixel data (4-bit/8-bit indexed or 16-bit RGBA5551) to RGBA PNG
+// Returns the path on success, empty string on failure
+static std::string DecodePsxTextureToPng(
+    const uint8_t* pixelData, size_t pixelDataSize,
+    const uint16_t* palette, size_t paletteSize,
+    uint16_t width, uint16_t height, uint8_t bpp,
+    const std::string& outputPath)
+{
+    if (pixelData == nullptr || width == 0 || height == 0 || width > 1024 || height > 1024) { return {}; }
+
+    size_t expectedSize;
+    if (bpp == 0) expectedSize = ((width + 1) / 2) * height;
+    else if (bpp == 1) expectedSize = width * height;
+    else if (bpp == 2) expectedSize = width * height * 2;
+    else { return {}; }
+
+    if (pixelDataSize < expectedSize) { return {}; }
+
+    std::vector<uint8_t> rgba(width * height * 4);
+
+    auto convert5551 = [](uint16_t val) -> std::array<uint8_t, 4> {
+        // GodotCTR: r=bits0-4, g=bits5-9, b=bits10-14, alpha always 1 except all-black=transparent
+        uint8_t r = static_cast<uint8_t>(((val >> 0) & 0x1F) * 8);
+        uint8_t g = static_cast<uint8_t>(((val >> 5) & 0x1F) * 8);
+        uint8_t b = static_cast<uint8_t>(((val >> 10) & 0x1F) * 8);
+        uint8_t a = 255;
+        if (r == 0 && g == 0 && b == 0) a = 0;
+        return { r, g, b, a };
+    };
+
+    std::vector<std::array<uint8_t, 4>> clut;
+    if (palette && paletteSize > 0)
+    {
+        clut.reserve(paletteSize);
+        for (size_t i = 0; i < paletteSize; i++)
+            clut.push_back(convert5551(palette[i]));
+    }
+
+    for (uint16_t y = 0; y < height; y++)
+    {
+        for (uint16_t x = 0; x < width; x++)
+        {
+            size_t dstIdx = (size_t(y) * width + x) * 4;
+            std::array<uint8_t, 4> color = { 0, 0, 0, 255 };
+
+            if (bpp == 0)
+            {
+                size_t srcIdx = y * ((width + 1) / 2) + x / 2;
+                uint8_t byte = pixelData[srcIdx];
+                int nibble = (x % 2 == 0) ? (byte & 0x0F) : ((byte >> 4) & 0x0F);
+                if (nibble < (int)clut.size()) color = clut[nibble];
+            }
+            else if (bpp == 1)
+            {
+                size_t srcIdx = size_t(y) * width + x;
+                uint8_t index = pixelData[srcIdx];
+                if (index < clut.size()) color = clut[index];
+            }
+            else if (bpp == 2)
+            {
+                size_t srcIdx = (size_t(y) * width + x) * 2;
+                uint16_t val = pixelData[srcIdx] | (static_cast<uint16_t>(pixelData[srcIdx + 1]) << 8);
+                color = convert5551(val);
+            }
+
+            rgba[dstIdx + 0] = color[0];
+            rgba[dstIdx + 1] = color[1];
+            rgba[dstIdx + 2] = color[2];
+            rgba[dstIdx + 3] = color[3];
+        }
+    }
+
+    if (stbi_write_png(outputPath.c_str(), width, height, 4, rgba.data(), width * 4))
+        return outputPath;
+    return {};
+}
+
+
+// Parse .ctrmodel binary data into renderable primitives (positions, colors, UVs, normals)
+// Modeled after GodotCTR's modelLoader.gd: getFinalTriVerts()
+// If cacheDir is non-empty, embedded textures are decoded to PNG files in that directory
+// modelName is used to uniquify texture filenames, preventing cache collision between models
+static std::vector<Primitive> ParseCtrModelGeometry(const std::vector<uint8_t>& data, const std::string& cacheDir = {}, const std::string& modelName = {})
+{
+	std::vector<Primitive> result;
+
+	if (data.size() < sizeof(SH::CtrModel)) { return result; }
+
+	const SH::CtrModel* ctrHeader = reinterpret_cast<const SH::CtrModel*>(data.data());
+	const PSX::Model* psxModel = reinterpret_cast<const PSX::Model*>(data.data() + ctrHeader->modelOffset);
+
+	if (psxModel->numHeaders == 0 || psxModel->offHeaders == 0) { return result; }
+
+	// Use the first header (highest LOD)
+	PSX::ModelHeader modelHeader;
+	memcpy(&modelHeader, data.data() + psxModel->offHeaders, sizeof(PSX::ModelHeader));
+
+	if (modelHeader.offCommandList == 0 || modelHeader.offFrameData == 0) { return result; }
+
+	// --- Per-submodel scale ---
+	// GodotCTR uses int16 * 0.0008 = int16 / 1250, but that's calibrated for
+	// GodotCTR's map scale (0.012). Our editor uses FP_ONE_GEO (1/64 ≈ 0.015625).
+	// The ratio (1/64)/0.012 = 1.302 gives us: 1/1250 * 1.302 = 1/960.
+	Vec3 modelScale(
+		modelHeader.scale.x * (1.0f / 960.0f),
+		modelHeader.scale.y * (1.0f / 960.0f),
+		modelHeader.scale.z * (1.0f / 960.0f)
+	);
+
+	// --- Read command list ---
+	const uint8_t* cmdBase = data.data() + modelHeader.offCommandList;
+	uint32_t unkNum;
+	memcpy(&unkNum, cmdBase, sizeof(uint32_t));
+	const PSX::InstDrawCommand* commands = reinterpret_cast<const PSX::InstDrawCommand*>(cmdBase + 4);
+
+	size_t numCommands = 0;
+	for (; commands[numCommands].command != 0xFFFFFFFF; numCommands++) {}
+
+	if (numCommands == 0 || numCommands > 10000) { return result; }
+
+	// --- Read frame data ---
+	const PSX::ModelFrame* modelFrame = reinterpret_cast<const PSX::ModelFrame*>(data.data() + modelHeader.offFrameData);
+
+	// GodotCTR frame origin: readVector(data, 0.00390625) = int16 * 1/256
+	Vec3 frameOrigin(
+		modelFrame->pos.x * (1.0f / 256.0f),
+		modelFrame->pos.y * (1.0f / 256.0f),
+		modelFrame->pos.z * (1.0f / 256.0f)
+	);
+
+	// Vertex data: uint8 × 3 per vertex (GodotCTR: data.get_u8())
+	const uint8_t* vertData = reinterpret_cast<const uint8_t*>(reinterpret_cast<const uint8_t*>(modelFrame) + modelFrame->vertexOffset);
+
+	// --- Parse embedded textures ---
+	struct TexKey {
+		uint8_t pageX, pageY, palX, bpp;
+		uint16_t palY;
+		bool operator==(const TexKey& o) const { return pageX == o.pageX && pageY == o.pageY && palX == o.palX && palY == o.palY && bpp == o.bpp; }
+	};
+	struct TexKeyHash {
+		size_t operator()(const TexKey& k) const {
+			return (size_t(k.pageX) << 0) ^ (size_t(k.pageY) << 4) ^ (size_t(k.palX) << 8) ^ (size_t(k.palY) << 16) ^ (size_t(k.bpp) << 32);
+		}
+	};
+	std::unordered_map<TexKey, std::string, TexKeyHash> texKeyToPath;
+
+	if (ctrHeader->textureDataOffset != 0 && !cacheDir.empty())
+	{
+		std::filesystem::create_directories(cacheDir);
+		const uint8_t* texBase = data.data() + ctrHeader->textureDataOffset;
+		SH::TextureSectionHeader texSection;
+		memcpy(&texSection, texBase, sizeof(SH::TextureSectionHeader));
+
+		if (texSection.numTextures > 0 && texSection.numTextures < 256)
+		{
+			for (uint32_t t = 0; t < texSection.numTextures; t++)
+			{
+				uint32_t texOffset;
+				memcpy(&texOffset, texBase + sizeof(SH::TextureSectionHeader) + t * sizeof(uint32_t), sizeof(uint32_t));
+
+				// Validate offset is within data
+				if (texOffset + sizeof(SH::TextureDataHeader) > data.size()) { continue; }
+
+				const uint8_t* texDataPtr = data.data() + texOffset;
+
+				SH::TextureDataHeader texHeader;
+				memcpy(&texHeader, texDataPtr, sizeof(SH::TextureDataHeader));
+
+				// Validate dimensions
+				if (texHeader.width == 0 || texHeader.height == 0 || texHeader.width > 1024 || texHeader.height > 1024) { continue; }
+
+				const uint8_t* pixData = texDataPtr + sizeof(SH::TextureDataHeader);
+
+				size_t pixSize;
+				if (texHeader.bpp == 0) pixSize = ((texHeader.width + 1) / 2) * texHeader.height;
+				else if (texHeader.bpp == 1) pixSize = texHeader.width * texHeader.height;
+				else if (texHeader.bpp == 2) pixSize = texHeader.width * texHeader.height * 2;
+				else { continue; }
+
+				// Validate total texture data fits in buffer
+				size_t palByteSize = (texHeader.bpp == 0) ? (16 * sizeof(uint16_t)) : (texHeader.bpp == 1) ? (256 * sizeof(uint16_t)) : 0;
+				if (texOffset + sizeof(SH::TextureDataHeader) + pixSize + palByteSize > data.size()) { continue; }
+
+				const uint16_t* palData = nullptr;
+				size_t palSize = 0;
+				if (texHeader.bpp < 2)
+				{
+					palData = reinterpret_cast<const uint16_t*>(pixData + pixSize);
+					palSize = (texHeader.bpp == 0) ? 16 : 256;
+				}
+
+				uint16_t palY = texHeader.origPalY_lo | (static_cast<uint16_t>(texHeader.origPalY_hi) << 8);
+				std::string pngPath = cacheDir + "/" + modelName + "_tex_" + std::to_string(t) + ".png";
+
+				if (DecodePsxTextureToPng(pixData, pixSize, palData, palSize,
+					texHeader.width, texHeader.height, texHeader.bpp,
+					pngPath) == pngPath)
+				{
+					TexKey key{ texHeader.origPageX, texHeader.origPageY, texHeader.origPalX, texHeader.bpp, palY };
+					texKeyToPath[key] = pngPath;
+				}
+			}
+		}
+	}
+
+	// --- Read texture layouts ---
+	std::vector<Vec2> texUVs;
+	std::vector<std::string> texIdxToPath;
+	if (modelHeader.offTexLayout != 0)
+	{
+		const uint32_t* texLayoutPtrs = reinterpret_cast<const uint32_t*>(data.data() + modelHeader.offTexLayout);
+		uint32_t maxTexIdx = 0;
+		for (size_t ci = 0; ci < numCommands; ci++)
+		{
+			if (commands[ci].texCoordIndex > maxTexIdx) { maxTexIdx = commands[ci].texCoordIndex; }
+		}
+		if (maxTexIdx > 0)
+		{
+			texUVs.resize(maxTexIdx * 4);
+			texIdxToPath.resize(maxTexIdx);
+		}
+		for (uint32_t ti = 0; ti < maxTexIdx; ti++)
+		{
+			PSX::TextureLayout layout;
+			memcpy(&layout, data.data() + texLayoutPtrs[ti], sizeof(PSX::TextureLayout));
+
+			// Raw UVs (0-255 from PSX, stored temporarily as floats)
+			float rawU[4] = { layout.u0, layout.u1, layout.u2, layout.u3 };
+			float rawV[4] = { layout.v0, layout.v1, layout.v2, layout.v3 };
+
+			// Normalize: map the bounding box of the 4 UVs to 0-1 range
+			// (GodotCTR's normalizeUV: ((raw - min) / (max - min)) * 255, then /255)
+			float minU = 255, minV = 255, maxU = 0, maxV = 0;
+			for (int i = 0; i < 4; i++)
+			{
+				if (rawU[i] < minU) minU = rawU[i];
+				if (rawV[i] < minV) minV = rawV[i];
+				if (rawU[i] > maxU) maxU = rawU[i];
+				if (rawV[i] > maxV) maxV = rawV[i];
+			}
+			float rangeU = maxU - minU;
+			float rangeV = maxV - minV;
+			if (rangeU < 1.0f) rangeU = 1.0f;
+			if (rangeV < 1.0f) rangeV = 1.0f;
+
+			for (int i = 0; i < 4; i++)
+			{
+				float nu = (rawU[i] - minU) / rangeU;
+				float nv = (rawV[i] - minV) / rangeV;
+				texUVs[ti * 4 + i] = Vec2(
+					std::clamp(nu, 0.0f, 1.0f),
+					std::clamp(nv, 0.0f, 1.0f)
+				);
+			}
+
+			// Match texture by VRAM coordinates (texpage + CLUT)
+			TexKey key{ layout.texPage.x, layout.texPage.y, layout.clut.x, layout.texPage.texpageColors, layout.clut.y };
+			auto kit = texKeyToPath.find(key);
+			if (kit != texKeyToPath.end())
+				texIdxToPath[ti] = kit->second;
+		}
+	}
+
+	// --- Read colors ---
+	std::vector<Color> colors;
+	if (modelHeader.offColors != 0)
+	{
+		const uint32_t* colorData = reinterpret_cast<const uint32_t*>(data.data() + modelHeader.offColors);
+		uint32_t maxColIdx = 0;
+		for (size_t ci = 0; ci < numCommands; ci++)
+		{
+			if (commands[ci].colorCoordIndex > maxColIdx) { maxColIdx = commands[ci].colorCoordIndex; }
+		}
+		colors.resize(maxColIdx + 1);
+		for (uint32_t ci = 0; ci <= maxColIdx; ci++)
+		{
+			uint32_t rgba = colorData[ci];
+			unsigned char r = (rgba >> 0) & 0xFF;
+			unsigned char g = (rgba >> 8) & 0xFF;
+			unsigned char b = (rgba >> 16) & 0xFF;
+			unsigned char a = (rgba >> 24) & 0xFF;
+			PSX::Color psxC = {};
+			psxC.r = r; psxC.g = g; psxC.b = b; psxC.a = a;
+			colors[ci] = ConvertColor(psxC);
+		}
+	}
+
+	// --- Count unique vertices ---
+	int numVerts = 0;
+	for (size_t ci = 0; ci < numCommands; ci++)
+	{
+		if (!commands[ci].readNextVertFromStackIndexFlag)
+			numVerts++;
+	}
+
+	// --- Decode vertices using GodotCTR formula ---
+	// vfixed[i].x = ((srcVert.x / 255.0) + offset.x) * scale.x
+	// vfixed[i].y = ((srcVert.z / 255.0) + offset.y) * scale.y  (Y/Z swizzle!)
+	// vfixed[i].z = ((srcVert.y / 255.0) + offset.z) * scale.z
+	struct VertData {
+		Vec3 pos;
+		Color color;
+		Vec2 uv;
+	};
+	std::vector<VertData> vfixed;
+	vfixed.reserve(numVerts);
+	for (int i = 0; i < numVerts; i++)
+	{
+		const uint8_t* src = vertData + i * 3;
+		Vec3 pos;
+		pos.x = ((src[0] / 255.0f) + frameOrigin.x) * modelScale.x;
+		pos.y = ((src[2] / 255.0f) + frameOrigin.y) * modelScale.y;
+		pos.z = ((src[1] / 255.0f) + frameOrigin.z) * modelScale.z;
+
+		// GodotCTR applies * Vector3(-1, 1, -1) to all vertices
+		pos.x = -pos.x;
+		pos.z = -pos.z;
+
+		VertData vd;
+		vd.pos = pos;
+		vd.color = Color(static_cast<unsigned char>(128), static_cast<unsigned char>(128), static_cast<unsigned char>(128));
+		vd.uv = Vec2(0.0f, 0.0f);
+		vfixed.push_back(vd);
+	}
+
+	// --- Process command list as triangle strips ---
+	std::vector<VertData> stack(256);
+	int vertexIndex = 0;
+	int stripLength = 0;
+
+	VertData temp[4] = {};
+
+	// Buffer for emitted triangles
+	struct EmittedTri {
+		Vec3 pos[3];
+		Color color[3];
+		Vec2 uv[3];
+		std::string texturePath;
+	};
+	std::vector<EmittedTri> emittedTriangles;
+
+	for (size_t ci = 0; ci < numCommands; ci++)
+	{
+		const PSX::InstDrawCommand& cmd = commands[ci];
+
+		if (!cmd.readNextVertFromStackIndexFlag)
+		{
+			stack[cmd.stackWriteLocationIndex] = vfixed[vertexIndex];
+			vertexIndex++;
+		}
+
+		// Shift rolling buffer (GodotCTR: temp[0]=temp[1]; temp[1]=temp[2]; temp[2]=temp[3])
+		temp[0] = temp[1];
+		temp[1] = temp[2];
+		temp[2] = temp[3];
+		temp[3] = stack[cmd.stackWriteLocationIndex];
+
+		// Assign color from palette
+		temp[3].color = Color(static_cast<unsigned char>(128), static_cast<unsigned char>(128), static_cast<unsigned char>(128));
+		if (cmd.colorCoordIndex < colors.size())
+		{
+			temp[3].color = colors[cmd.colorCoordIndex];
+		}
+
+		// swapFlag: copy temp[0] over temp[1] (GodotCTR: temp[1] = temp[0])
+		if (cmd.swapFlag)
+		{
+			temp[1] = temp[0];
+		}
+
+		// resetFlag: start new strip (GodotCTR: stripLength = 0)
+		if (cmd.resetFlag)
+		{
+			stripLength = 0;
+		}
+
+		// Emit triangle when stripLength >= 2 (GodotCTR: for z in range(2,-1,-1): temp[z+1])
+		if (stripLength >= 2)
+		{
+			EmittedTri tri;
+
+			// UVs are assigned from the current command's texture layout at emit time
+			Vec2 emitUVs[3] = { Vec2(0, 0), Vec2(0, 0), Vec2(0, 0) };
+			int texIdx = cmd.texCoordIndex;
+			if (texIdx > 0 && texIdx - 1 < texUVs.size() / 4)
+			{
+				// GodotCTR: textureLayout["normUV"][z] for z=2,1,0 → uv[2], uv[1], uv[0]
+				emitUVs[0] = texUVs[(texIdx - 1) * 4 + 2];
+				emitUVs[1] = texUVs[(texIdx - 1) * 4 + 1];
+				emitUVs[2] = texUVs[(texIdx - 1) * 4 + 0];
+			}
+
+			// Emit: temp[3], temp[2], temp[1] (matching GodotCTR's z+1 with z=2,1,0)
+			tri.pos[0] = temp[3].pos;
+			tri.pos[1] = temp[2].pos;
+			tri.pos[2] = temp[1].pos;
+			tri.color[0] = temp[3].color;
+			tri.color[1] = temp[2].color;
+			tri.color[2] = temp[1].color;
+			tri.uv[0] = emitUVs[0];
+			tri.uv[1] = emitUVs[1];
+			tri.uv[2] = emitUVs[2];
+
+			// Set texture path
+			if (texIdx > 0 && texIdx - 1 < texIdxToPath.size())
+				tri.texturePath = texIdxToPath[texIdx - 1];
+
+			emittedTriangles.push_back(tri);
+
+			// FlipNormal: swap last 2 vertices of most recent triangle
+			if (cmd.normalFlipFlag)
+			{
+				auto& last = emittedTriangles.back();
+				std::swap(last.pos[1], last.pos[2]);
+				std::swap(last.color[1], last.color[2]);
+				std::swap(last.uv[1], last.uv[2]);
+			}
+		}
+
+		stripLength++;
+	}
+
+	// Convert to Primitive list
+	for (const auto& et : emittedTriangles)
+	{
+		Tri tri;
+		tri.p[0].pos = et.pos[0];
+		tri.p[1].pos = et.pos[1];
+		tri.p[2].pos = et.pos[2];
+		tri.p[0].color = et.color[0];
+		tri.p[1].color = et.color[1];
+		tri.p[2].color = et.color[2];
+		tri.p[0].uv = et.uv[0];
+		tri.p[1].uv = et.uv[1];
+		tri.p[2].uv = et.uv[2];
+
+		tri.texture = et.texturePath;
+
+		Vec3 e1 = tri.p[1].pos - tri.p[0].pos;
+		Vec3 e2 = tri.p[2].pos - tri.p[0].pos;
+		Vec3 n = e1.Cross(e2);
+		if (n.LengthSquared() > 0.0001f) { n.Normalize(); }
+		tri.p[0].normal = n;
+		tri.p[1].normal = n;
+		tri.p[2].normal = n;
+
+		result.push_back(tri);
+	}
+
+	return result;
+}
+
+
+void Level::GenerateRenderInstanceData()
+{
+	Model* instanceModel = m_models[LevelModels::INSTANCES];
+	if (!instanceModel) { return; }
+
+	instanceModel->ClearModels();
+
+	if (m_instances.empty())
+	{
+		instanceModel->GetMesh().Clear();
+		return;
+	}
+
+	constexpr float labelHeightOffset = 3.0f;
+
+	for (size_t i = 0; i < m_instances.size(); i++)
+	{
+		const Instance& inst = m_instances[i];
+		const Vec3& pos = inst.GetPos();
+		const std::string& modelName = inst.GetModelName();
+
+		// Geometry child (always created, ensures stride = 2 per instance)
+		Model* childModel = instanceModel->AddModel();
+		if (!modelName.empty())
+		{
+			auto cacheIt = m_parsedModelCache.find(modelName);
+			if (cacheIt == m_parsedModelCache.end())
+			{
+				auto importIt = m_importedModels.find(modelName);
+				if (importIt != m_importedModels.end())
+				{
+					std::string texCacheDir = (std::filesystem::temp_directory_path() / "CTE_tex_cache").string();
+					std::vector<Primitive> primitives = ParseCtrModelGeometry(importIt->second, texCacheDir, modelName);
+					if (!primitives.empty())
+					{
+						m_parsedModelCache[modelName] = primitives;
+						cacheIt = m_parsedModelCache.find(modelName);
+					}
+				}
+			}
+
+			if (cacheIt != m_parsedModelCache.end() && !cacheIt->second.empty())
+			{
+				childModel->GetMesh().SetGeometry(
+					cacheIt->second,
+					Mesh::RenderFlags::DrawBackfaces | Mesh::RenderFlags::DontOverrideRenderFlags
+				);
+			}
+		}
+		childModel->SetPosition(inst.GetPos());
+		childModel->SetRotation(inst.GetRot());
+		childModel->SetScale(inst.GetScale());
+
+		// Label with instance name
+		Model* label = instanceModel->AddModel();
+		std::string labelText = inst.GetName();
+		if (labelText.empty())
+			labelText = "Instance " + std::to_string(i + 1);
+		label->GetMesh().SetGeometry(labelText, Text3D::Align::CENTER, Color(static_cast<unsigned char>(0), static_cast<unsigned char>(200), static_cast<unsigned char>(200), static_cast<unsigned char>(255)));
+		Vec3 labelPos = pos;
+		labelPos.y += labelHeightOffset;
+		label->SetPosition(labelPos);
+	}
+
+	// Placeholder mesh so parent Model::IsReady() returns true
+	std::vector<Primitive> dummy;
+	dummy.push_back(Tri(Point(0,0,0,0,0,0), Point(0,0,0,0,0,0), Point(0,0,0,0,0,0)));
+	instanceModel->GetMesh().SetGeometry(
+		dummy,
+		Mesh::RenderFlags::DrawBackfaces | Mesh::RenderFlags::DontOverrideRenderFlags
+	);
+}
+
 
 void Level::GenerateRenderStartpointData()
 {

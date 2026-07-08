@@ -85,6 +85,7 @@ void BSP::PopulateLeaf(PSX::BSPLeaf& leaf, std::vector<BSP*>& bspArray, const st
 	m_node = BSPNode::LEAF;
 	m_axis = AxisSplit::NONE;
 	m_flags = leaf.flag;
+	m_offHitbox = leaf.offHitbox;
 	m_left = nullptr; 
 	m_right = nullptr; 
 	m_bbox = BoundingBox();

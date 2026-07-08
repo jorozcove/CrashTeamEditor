@@ -319,8 +319,9 @@ void BotPath::RenderUI(int pathIndex)
 }
 
 
-void Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, std::unordered_map<std::string, std::vector<uint8_t>>& importedModels, Vec3& queryPoint)
+bool Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, std::unordered_map<std::string, std::vector<uint8_t>>& importedModels, Vec3& queryPoint)
 {
+	bool modelChanged = false;
 
 	std::string headerLabel = m_name.empty() ? ("Instance " + std::to_string(index + 1)) : m_name;
 	if (ImGui::CollapsingHeader((headerLabel + "###instHeader").c_str()))
@@ -334,6 +335,7 @@ void Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, st
 				if (ImGui::Selectable(name.c_str(), isSelected))
 				{
 					m_modelName = name;
+					modelChanged = true;
 				}
 				if (isSelected)
 				{
@@ -344,8 +346,8 @@ void Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, st
 		}
 
 		// Instance name
-		char nameBuffer[16] = {};
-		std::memcpy(nameBuffer, m_name.data(), std::min(m_name.size(), sizeof(nameBuffer)));
+		char nameBuffer[64] = {};
+		m_name.copy(nameBuffer, sizeof(nameBuffer) - 1);
 		if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
 		{
 			m_name = std::string(nameBuffer, strnlen(nameBuffer, sizeof(nameBuffer)));
@@ -554,6 +556,7 @@ void Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, st
 		}
 	}
 
+	return modelChanged;
 }
 
 template<typename T, MaterialType M>
@@ -1485,6 +1488,9 @@ void Level::RenderUI(Renderer& renderer)
 					checkboxPair("Show BSP", &GuiRenderSettings::showBspRectTree, "Show Vis Tree", &GuiRenderSettings::showVisTree);
 					unsigned skyboxRenderChanged = checkboxPair("Show Skybox", &GuiRenderSettings::showSkybox, "Show BotNodes", &GuiRenderSettings::showBots);
 					if (skyboxRenderChanged & REND_FLAGS_COLUMN_0) { GenerateRenderSkyboxData(); }
+					ImGui::TableNextRow();
+					ImGui::TableSetColumnIndex(0);
+					ImGui::Checkbox("Show Instances", &GuiRenderSettings::showInstances);
 
 					ImGui::EndTable();
 				}
@@ -1796,6 +1802,7 @@ void Level::RenderUI(Renderer& renderer)
 			if (ImGui::Button("+ Add Instance"))
 			{
 				m_instances.emplace_back(m_importedModels.begin()->first);
+				GenerateRenderInstanceData();
 			}
 
 			if (!hasModels)
@@ -1874,6 +1881,7 @@ void Level::RenderUI(Renderer& renderer)
 						}
 						else if (GenerateInstanceRow(checkpointIndex, createRowInstanceIndex, createRowNumInstances, createRowSpacing, createRowDeleteAfter))
 						{
+							GenerateRenderInstanceData();
 							createRowMessage = "Successfully created the instance row.";
 							if (createRowDeleteAfter)
 							{
@@ -1907,6 +1915,7 @@ void Level::RenderUI(Renderer& renderer)
 			// Show instances
 			int instanceToDelete = -1;
 			int instanceToDuplicate = -1;
+			bool renderInstanceNeedsUpdate = false;
 			for (size_t i = 0; i < m_instances.size(); i++)
 			{
 				// Auto-open/close for duplication
@@ -1918,7 +1927,8 @@ void Level::RenderUI(Renderer& renderer)
 				ImGui::PushID(static_cast<int>(i));
 				bool shouldDelete = false;
 				bool shouldDuplicate = false;
-				m_instances[i].RenderUI(shouldDelete, shouldDuplicate, static_cast<int>(i), m_importedModels, m_rendererQueryPoint);
+				if (m_instances[i].RenderUI(shouldDelete, shouldDuplicate, static_cast<int>(i), m_importedModels, m_rendererQueryPoint))
+					renderInstanceNeedsUpdate = true;
 				if (shouldDelete)
 					instanceToDelete = i;
 				if (shouldDuplicate)
@@ -1926,11 +1936,12 @@ void Level::RenderUI(Renderer& renderer)
 				ImGui::PopID();
 			}
 
-			// Delete instance after iteration
-			if (instanceToDelete >= 0)
-			{
-				m_instances.erase(m_instances.begin() + instanceToDelete);
-			}
+		// Delete instance after iteration
+		if (instanceToDelete >= 0)
+		{
+			m_instances.erase(m_instances.begin() + instanceToDelete);
+			GenerateRenderInstanceData();
+		}
 
 			// Duplicate instance after iteration
 			if (instanceRowCreated)
@@ -1942,31 +1953,10 @@ void Level::RenderUI(Renderer& renderer)
 			{
 				m_closeInstanceIndex = instanceToDuplicate;
 				m_instances.push_back(m_instances[instanceToDuplicate]);
-				Instance& original = m_instances[instanceToDuplicate];
+				GenerateRenderInstanceData();
 				Instance& dup = m_instances.back();
 
-				// Append _2, _3, etc. to the name
-				std::string baseName = original.GetName();
-				std::string newName;
-				size_t underscorePos = baseName.rfind('_');
-				if (underscorePos != std::string::npos && underscorePos + 1 < baseName.size())
-				{
-					std::string suffix = baseName.substr(underscorePos + 1);
-					if (!suffix.empty() && std::all_of(suffix.begin(), suffix.end(), ::isdigit))
-					{
-						int num = std::stoi(suffix) + 1;
-						newName = baseName.substr(0, underscorePos + 1) + std::to_string(num);
-					}
-					else
-					{
-						newName = baseName + "_2";
-					}
-				}
-				else
-				{
-					newName = baseName + "_2";
-				}
-				dup.SetName(newName);
+				dup.SetName(GenerateUniqueInstanceName(dup.GetName()));
 
 				// Track for auto-open
 				m_openInstanceIndex = static_cast<int>(m_instances.size() - 1);
@@ -1977,15 +1967,44 @@ void Level::RenderUI(Renderer& renderer)
 				m_closeInstanceIndex = -1;
 			}
 
+			if (renderInstanceNeedsUpdate)
+				GenerateRenderInstanceData();
+
 			if (m_instances.empty())
 			{
 				ImGui::TextDisabled("No instances created");
 			}
 		}
 		ImGui::End();
+
+		// Live update instance transforms without full regeneration
+		if (!m_instances.empty())
+		{
+			Model* instanceModel = GetInstancesModel();
+			if (instanceModel && instanceModel->GetModelCount() >= m_instances.size() * 2)
+			{
+				for (size_t i = 0; i < m_instances.size(); i++)
+				{
+					const Instance& inst = m_instances[i];
+					Vec3 pos = inst.GetPos();
+
+					Model* geom = instanceModel->GetModel(i * 2);
+					if (geom) {
+						geom->SetPosition(pos);
+						geom->SetRotation(inst.GetRot());
+						geom->SetScale(inst.GetScale());
+					}
+
+					Model* label = instanceModel->GetModel(i * 2 + 1);
+					if (label) {
+						Vec3 labelPos = pos;
+						labelPos.y += 3.0f;
+						label->SetPosition(labelPos);
+					}
+				}
+			}
+		}
 	}
-
-
 
 	if (Settings::w_bot)
 	{

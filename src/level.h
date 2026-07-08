@@ -38,7 +38,8 @@ namespace LevelModels
 	static constexpr size_t FILTER = 6;
 	static constexpr size_t SKYBOX = 7;
 	static constexpr size_t BOT = 8;
-	static constexpr size_t COUNT = 9;
+	static constexpr size_t INSTANCES = 9;
+	static constexpr size_t COUNT = 10;
 };
 
 class Level
@@ -70,6 +71,7 @@ public:
 	Model* GetSelectedModel();
 	Model* GetMultiSelectedModel();
 	Model* GetFilterModel();
+	Model* GetInstancesModel();
 	bool LoadPreset(const std::filesystem::path& filename);
 	bool SavePreset(const std::filesystem::path& path);
 	void ResetFilter();
@@ -98,6 +100,7 @@ private:
 	void GenerateBotPathChangeCode();
 	bool GenerateSpawn(float colSpacing, float rowSpacing);
 	bool GenerateInstanceRow(int checkpointIndex, size_t instanceIndex, int numInstances, float spacing, bool deleteAfter);
+	std::string GenerateUniqueInstanceName(const std::string& name) const;
 	bool GenerateCheckpoints();
 	bool GenerateBSP();
 
@@ -109,6 +112,7 @@ private:
 	void UpdateAnimationRenderData();
 	void UpdateFilterRenderData(const Quadblock& qb);
 	void GenerateRenderBspData();
+	void GenerateRenderInstanceData();
 	void GenerateRenderStartpointData();
 	void GenerateRenderSkyboxData();
 	void GenerateRenderSelectedBlockData(const Quadblock& quadblock, const Vec3& queryPoint);
@@ -187,8 +191,17 @@ private:
 	// Imported .ctrmodel data (name -> raw file binary)
 	std::unordered_map<std::string, std::vector<uint8_t>> m_importedModels;
 
+	// Parsed .ctrmodel geometry cache (name -> primitives)
+	std::unordered_map<std::string, std::vector<Primitive>> m_parsedModelCache;
+
 	// Model textures placed in VRAM (filled by UpdateVRM, used by SaveLEV)
 	std::vector<ModelTextureForVRM> m_modelTexturesInVRAM;
+
+	// Raw .lev file binary (for direct model rendering without .ctrmodel)
+	std::vector<uint8_t> m_levData;
+
+	// VRAM data parsed from .vrm file (for model texture extraction)
+	std::vector<uint16_t> m_vramData;
 
 	std::vector<Instance> m_instances;
 	int m_openInstanceIndex = -1;

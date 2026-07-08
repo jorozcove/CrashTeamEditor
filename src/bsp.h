@@ -63,6 +63,8 @@ public:
 	std::vector<uint8_t> Serialize(size_t offQuads) const;
 	void RenderUI(const std::vector<Quadblock>& quadblocks);
 
+	uint32_t GetOffHitbox() const { return m_offHitbox; }
+
 private:
 	float GetAxisMidpoint(const AxisSplit axis) const;
 	BoundingBox ComputeBoundingBox(const std::vector<Quadblock>& quadblocks, const std::vector<size_t>& quadblockIndexes) const;
@@ -84,4 +86,5 @@ private:
 	BSP* m_parent;
 	BoundingBox m_bbox;
 	std::vector<size_t> m_quadblockIndexes;
+	uint32_t m_offHitbox = 0;
 };
