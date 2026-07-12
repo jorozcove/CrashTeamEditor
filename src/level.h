@@ -189,17 +189,11 @@ private:
 	std::vector<size_t> m_rendererSelectedQuadblockIndexes;
 	size_t m_lastAnimTextureCount;
 
-	// Imported .ctrmodel data (name -> raw file binary)
-	std::unordered_map<std::string, std::vector<uint8_t>> m_importedModels;
-
-	// Parsed .ctrmodel geometry cache (name -> primitives)
-	std::unordered_map<std::string, std::vector<Primitive>> m_parsedModelCache;
+	// Imported .ctrmodel data (name -> model with raw bytes and parsed geometry)
+	std::unordered_map<std::string, InstanceModel> m_instanceModels;
 
 	// Model textures placed in VRAM (filled by UpdateVRM, used by SaveLEV)
 	std::vector<ModelTextureForVRM> m_modelTexturesInVRAM;
-
-	// Raw .lev file binary (for direct model rendering without .ctrmodel)
-	std::vector<uint8_t> m_levData;
 
 	// VRAM data parsed from .vrm file (for model texture extraction)
 	std::vector<uint16_t> m_vramData;

@@ -290,10 +290,22 @@ enum class ModelId : int32_t
 class InstanceModel
 {
 public:
+	InstanceModel() = default;
+	InstanceModel(std::string name, std::vector<uint8_t> rawData);
+
+	const std::string& GetName() const { return m_name; }
+	const std::vector<uint8_t>& GetRawData() const { return m_rawData; }
+
+	const std::vector<Primitive>& GetParsedGeometry() const { return m_parsedGeometry; }
+	std::vector<Primitive>& GetParsedGeometry() { return m_parsedGeometry; }
+	bool IsParsed() const { return m_parsed; }
+	void SetParsed(bool parsed) { m_parsed = parsed; }
 
 private:
 	std::string m_name;
-	std::vector<uint8_t> m_rawData; //.ctrmodel file
+	std::vector<uint8_t> m_rawData;
+	std::vector<Primitive> m_parsedGeometry;
+	bool m_parsed = false;
 };
 
 
@@ -348,9 +360,9 @@ public:
 	void SetHitbox(const InstanceHitbox& hitbox) { m_hitbox = hitbox; }
 
 	BoundingBox ComputeBBox();
-	bool RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, std::unordered_map<std::string, std::vector<uint8_t>>& importedModels, Vec3& queryPoint);
+	bool RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, const std::vector<std::string>& modelNames, Vec3& queryPoint);
 	std::vector<uint8_t> Serialize() const;
-	std::vector<uint8_t> SerializeHitbox(uint32_t insatnceOffset) const;
+	PSX::InstHitbox SerializeHitbox(uint32_t insatnceOffset) const;
 private:
 	std::string m_name;
 	Vec3 m_scale;

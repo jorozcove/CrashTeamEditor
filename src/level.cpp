@@ -102,9 +102,7 @@ void Level::Clear(bool clearErrors)
 	m_splitLines[1] = 0.0;
 	m_jumpYSpeedCap = 0;
 	m_instances.clear();
-	m_importedModels.clear();
-	m_parsedModelCache.clear();
-	m_levData.clear();
+	m_instanceModels.clear();
 	m_vramData.clear();
 	std::error_code ec;
 	std::filesystem::remove_all(std::filesystem::temp_directory_path() / "CTE_tex_cache", ec);
@@ -139,7 +137,7 @@ bool Level::ImportModel(const std::filesystem::path& ctrmodelPath)
 	std::string name(model->name, strnlen(model->name, sizeof(model->name)));
 
 	printf("Imported model: %s (%zu bytes)\n", name.c_str(), ctrmodelData.size());
-	m_importedModels[name] = std::move(ctrmodelData);
+	m_instanceModels.emplace(name, InstanceModel(name, std::move(ctrmodelData)));
 
 	return true;
 }
@@ -1172,22 +1170,12 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	std::ifstream file(levFile, std::ios::binary);
 	if (!file.is_open()) return false;
 
-	// Read entire LEV file into memory for direct model access
-	file.seekg(0, std::ios::end);
-	size_t levSize = file.tellg();
-	file.seekg(0, std::ios::beg);
-	m_levData.resize(levSize);
-	file.read(reinterpret_cast<char*>(m_levData.data()), levSize);
-
-	// Read VRM for model texture extraction
+	// Read VRAM for model texture extraction
 	{
 		std::filesystem::path vrmPath = levFile;
 		vrmPath.replace_extension(".vrm");
 		m_vramData = ReadRawVRAM(vrmPath);
 	}
-
-	// Reset file position for existing loading logic
-	file.seekg(0, std::ios::beg);
 
 	m_hasRawTexture = true;
 
@@ -1833,13 +1821,11 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		}
 	}
 
-	//Load instances from .lev
+	// Collect unique model offsets referenced by instances (quick pass: read only offModel per InstDef)
 	std::unordered_set<uint32_t> uniqueModelOffsets;
-	std::vector<PSX::Vec3> instPSXPos;
 	std::vector<uint32_t> instPtrs;
 	if (header.numInstances > 0 && header.offModelInstances != 0)
 	{
-		instPSXPos.reserve(header.numInstances);
 		file.seekg(offLev + std::streampos(header.offModelInstances));
 		instPtrs.resize(header.numInstances);
 		for (uint32_t i = 0; i < header.numInstances; i++)
@@ -1847,6 +1833,61 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 			Read(file, instPtrs[i]);
 		}
 
+		for (uint32_t i = 0; i < header.numInstances; i++)
+		{
+			if (instPtrs[i] == 0) { break; }
+			// Read just the offModel field (at offset 0x30 in PSX::InstDef)
+			file.seekg(offLev + std::streampos(instPtrs[i]) + static_cast<std::streamoff>(offsetof(PSX::InstDef, offModel)));
+			uint32_t offModel = 0;
+			Read(file, offModel);
+			if (offModel != 0) { uniqueModelOffsets.insert(offModel); }
+		}
+	}
+
+	// Auto-extract models from LEV data into .ctrmodel files and import them
+	if (!uniqueModelOffsets.empty())
+	{
+		std::filesystem::path modelCacheDir = levFile.parent_path() / "extracted_models";
+		std::filesystem::create_directories(modelCacheDir);
+
+		// Extract all models using existing LevDataExtractor
+		{
+			std::filesystem::path extVrmPath = levFile;
+			extVrmPath.replace_extension(".vrm");
+			LevDataExtractor extractor(levFile, extVrmPath);
+			extractor.ExtractModels();
+		}
+
+		for (uint32_t modelOff : uniqueModelOffsets)
+		{
+			if (modelOff == 0) continue;
+
+			// Read model name from LEV using file stream
+			PSX::Model psxModel;
+			file.seekg(offLev + std::streampos(modelOff));
+			Read(file, psxModel);
+			std::string modelName(psxModel.name, strnlen(psxModel.name, sizeof(psxModel.name)));
+			if (modelName.empty())
+				modelName = "LEV_Model_0x" + std::to_string(modelOff);
+
+			// Skip if already imported
+			if (m_instanceModels.find(modelName) != m_instanceModels.end())
+				continue;
+
+			std::filesystem::path ctrmodelPath = modelCacheDir / (modelName + ".ctrmodel");
+			if (!std::filesystem::exists(ctrmodelPath))
+				continue;
+
+			ImportModel(ctrmodelPath);
+		}
+	}
+
+	// Load instances from .lev
+	std::vector<PSX::Vec3> instPSXPos;
+	file.clear();
+	if (header.numInstances > 0 && header.offModelInstances != 0)
+	{
+		instPSXPos.reserve(header.numInstances);
 		for (uint32_t i = 0; i < header.numInstances; i++)
 		{
 			if (instPtrs[i] == 0) { break; }
@@ -1866,12 +1907,12 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 			inst.SetUnk24(psxInst.unk24);
 			inst.SetUnk28(psxInst.unk28);
 
-			// Look up model name from model data
+			// Look up model name from already-loaded models
 			if (psxInst.offModel != 0)
 			{
-				uniqueModelOffsets.insert(psxInst.offModel);
+				// Read model name from LEV using file stream
+				PSX::Model psxModel;
 				file.seekg(offLev + std::streampos(psxInst.offModel));
-				PSX::Model psxModel = {};
 				Read(file, psxModel);
 				std::string modelName(psxModel.name, strnlen(psxModel.name, sizeof(psxModel.name)));
 				if (!modelName.empty())
@@ -1880,7 +1921,6 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 				}
 				else
 				{
-					// Use synthetic name based on offset
 					inst.SetModelName("LEV_Model_0x" + std::to_string(psxInst.offModel));
 				}
 			}
@@ -1890,7 +1930,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		}
 	}
 
-	// Load instance hitbox data from BSP leaf offHitbox lists
+	// Load instance hitbox data from BSP leaf offHitbox lists using file stream
 	if (!m_instances.empty())
 	{
 		std::vector<const BSP*> bspLeaves = m_bsp.GetLeaves();
@@ -1899,16 +1939,16 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 			uint32_t offHitbox = leaf->GetOffHitbox();
 			if (offHitbox == 0) continue;
 
-			// Validate offHitbox is within levData
-			if (offHitbox + 4 + sizeof(PSX::InstHitbox) > m_levData.size()) continue;
-			const uint8_t* hitboxData = m_levData.data() + 4 + offHitbox;
-			size_t maxHitboxes = (m_levData.size() - (offHitbox + 4)) / sizeof(PSX::InstHitbox);
-			for (size_t hi = 0; hi < maxHitboxes; hi++)
+			file.clear();
+			// Read hitbox entries from LEV using file stream
+			for (size_t hi = 0; ; hi++)
 			{
 				PSX::InstHitbox hitbox = {};
-				std::memcpy(&hitbox, hitboxData + hi * sizeof(PSX::InstHitbox), sizeof(PSX::InstHitbox));
-				if (hitbox.flags == 0 && hitbox.offInstDef == 0)
-					break;
+				file.clear();
+				file.seekg(offLev + std::streampos(offHitbox) + static_cast<std::streamoff>(hi * sizeof(PSX::InstHitbox)));
+				if (!file.read(reinterpret_cast<char*>(&hitbox), sizeof(PSX::InstHitbox))) break;
+				if (hitbox.flags == 0 && hitbox.offInstDef == 0) break;
+
 				for (size_t i = 0; i < m_instances.size(); i++)
 				{
 					if (i >= instPSXPos.size()) continue;
@@ -1927,44 +1967,6 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 		}
 	}
 
-	// Auto-extract models from LEV data into .ctrmodel files and import them
-	if (!uniqueModelOffsets.empty() && !m_levData.empty())
-	{
-		std::filesystem::path modelCacheDir = levFile.parent_path() / "extracted_models";
-		std::filesystem::create_directories(modelCacheDir);
-
-		// Extract all models using existing LevDataExtractor
-		{
-			std::filesystem::path extVrmPath = levFile;
-			extVrmPath.replace_extension(".vrm");
-			LevDataExtractor extractor(levFile, extVrmPath);
-			extractor.ExtractModels();
-		}
-
-		for (uint32_t modelOff : uniqueModelOffsets)
-		{
-			if (modelOff == 0) continue;
-
-			// Read model name from LEV data
-			PSX::Model psxModel;
-			memcpy(&psxModel, m_levData.data() + 4 + modelOff, sizeof(PSX::Model));
-			std::string modelName(psxModel.name, strnlen(psxModel.name, sizeof(psxModel.name)));
-			if (modelName.empty())
-				modelName = "LEV_Model_0x" + std::to_string(modelOff);
-
-			// Skip if already imported
-			if (m_importedModels.find(modelName) != m_importedModels.end())
-				continue;
-
-			std::filesystem::path ctrmodelPath = modelCacheDir / (modelName + ".ctrmodel");
-			if (!std::filesystem::exists(ctrmodelPath))
-				continue;
-
-			// Import the .ctrmodel (reads file into m_importedModels)
-			ImportModel(ctrmodelPath);
-		}
-	}
-
 
 	m_loaded = true;
 	file.close();
@@ -1976,7 +1978,8 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 
 std::vector<uint8_t> Level:: SerializeModel(const std::string& modelName, std::unordered_map<std::string, size_t>& modelOffsets)
 {
-	const std::vector<uint8_t>& ctrmodelData = m_importedModels.at(modelName);
+	const InstanceModel& instModel = m_instanceModels.at(modelName);
+	const std::vector<uint8_t>& ctrmodelData = instModel.GetRawData();
 	size_t modelBaseOffset = modelOffsets[modelName];
 
 	// Parse .ctrmodel to get model data and patch table
@@ -2736,7 +2739,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	header.offLevNavTable = static_cast<uint32_t>(offNavTable);
 	
 	// Set skybox pointer in header if enabled
-	if (!skyboxData.empty())
+	if (m_skybox.IsReady())
 	{
 		header.offSkybox = static_cast<uint32_t>(offSkyboxData);
 	}
@@ -2803,7 +2806,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 
 	for (const std::string& modelName : modelOrder)
 	{
-		const std::vector<uint8_t>& ctrmodelData = m_importedModels.at(modelName);
+		const std::vector<uint8_t>& ctrmodelData = m_instanceModels.at(modelName).GetRawData();
 
 		// Parse .ctrmodel to get model data size
 		const SH::CtrModel* ctrHeader = reinterpret_cast<const SH::CtrModel*>(ctrmodelData.data());
@@ -2842,49 +2845,41 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 		size_t listFileOffset; // file offset of this hitbox list
 		std::vector<PSX::InstHitbox> entries;
 	};
-	std::vector<std::vector<uint8_t>> serializedLeafHitboxLists;
-	std::vector<size_t> leafOffsetHitbox; //offset of leaves with hitbox
-	std::vector<size_t> hitboxOffsets; // offset of all hitboxes
-
-	
-	std::vector<std::vector<uint8_t>> serializedHitboxes;
-
-	for (size_t i = 0; i < m_instances.size(); i++)
+	std::vector<LeafHitboxList> leafHitboxLists;
 	{
-		if (!m_instances[i].GetHitbox().enabled) { continue; }
-		serializedHitboxes.push_back(m_instances[i].SerializeHitbox(instDefOffsets[i]));
-	}
-
-	if (!serializedHitboxes.empty())
-	{
-		size_t nodeFileOffset = offBSP;
-		for (size_t node = 0; node < serializedBSPs.size(); node++)
+		std::vector<PSX::InstHitbox> enabledHitboxes;
+		for (size_t i = 0; i < m_instances.size(); i++)
 		{
-			const size_t currNodeOffset = nodeFileOffset;
-			nodeFileOffset += serializedBSPs[node].size();
-			if (orderedBSPNodes[node]->IsBranch()) { continue; }
+			const InstanceHitbox& settings = m_instances[i].GetHitbox();
+			if (!settings.enabled) { continue; }
+			enabledHitboxes.push_back(m_instances[i].SerializeHitbox(instDefOffsets[i]));
+		}
 
-			PSX::BSPLeaf* leaf = reinterpret_cast<PSX::BSPLeaf*>(serializedBSPs[node].data());
-			std::vector<std::vector<uint8_t>> overlapping;
-			leaf->offHitbox = static_cast<uint32_t>(currOffset);
-			for (size_t hb = 0; hb < serializedHitboxes.size(); hb ++)
+		if (!enabledHitboxes.empty())
+		{
+			size_t nodeFileOffset = offBSP;
+			for (size_t node = 0; node < serializedBSPs.size(); node++)
 			{
-				PSX::InstHitbox* hitbox = reinterpret_cast<PSX::InstHitbox*>(serializedHitboxes[hb].data());
-				if (hitbox->bbox.max.x < leaf->bbox.min.x || leaf->bbox.max.x < hitbox->bbox.min.x ||
-						hitbox->bbox.max.y < leaf->bbox.min.y || leaf->bbox.max.y < hitbox->bbox.min.y ||
-						hitbox->bbox.max.z < leaf->bbox.min.z || leaf->bbox.max.z < hitbox->bbox.min.z) { continue; }
-				overlapping.push_back(serializedHitboxes[hb]);
-				serializedLeafHitboxLists.push_back(serializedHitboxes[hb]);
-				hitboxOffsets.push_back(currOffset);
-				currOffset += sizeof(PSX::InstHitbox);
-			}
-			if (overlapping.empty()) { leaf->offHitbox = static_cast<uint32_t>(0); continue; }
+				const size_t currNodeOffset = nodeFileOffset;
+				nodeFileOffset += serializedBSPs[node].size();
+				if (orderedBSPNodes[node]->IsBranch()) { continue; }
 
-			// dedup eventually leaves with exact same "overlapping" array
-			printf("offLeafHitboxList[node %zu] = %zx (%zu entries)\n", node, currOffset, overlapping.size());
-			serializedLeafHitboxLists.push_back({ 0,0,0,0 }); // null terminator
-			currOffset += sizeof(uint32_t); // entries + terminator
-			leafOffsetHitbox.push_back(currNodeOffset);
+				PSX::BSPLeaf* leaf = reinterpret_cast<PSX::BSPLeaf*>(serializedBSPs[node].data());
+				std::vector<PSX::InstHitbox> overlapping;
+				for (const PSX::InstHitbox& hitbox : enabledHitboxes)
+				{
+					if (hitbox.bbox.max.x < leaf->bbox.min.x || leaf->bbox.max.x < hitbox.bbox.min.x ||
+							hitbox.bbox.max.y < leaf->bbox.min.y || leaf->bbox.max.y < hitbox.bbox.min.y ||
+							hitbox.bbox.max.z < leaf->bbox.min.z || leaf->bbox.max.z < hitbox.bbox.min.z) { continue; }
+					overlapping.push_back(hitbox);
+				}
+				if (overlapping.empty()) { continue; }
+
+				leaf->offHitbox = static_cast<uint32_t>(currOffset);
+				printf("offLeafHitboxList[node %zu] = %zx (%zu entries)\n", node, currOffset, overlapping.size());
+				leafHitboxLists.push_back({currNodeOffset, currOffset, std::move(overlapping)});
+				currOffset += leafHitboxLists.back().entries.size() * sizeof(PSX::InstHitbox) + sizeof(uint32_t); // entries + terminator
+			}
 		}
 	}
 	
@@ -2937,7 +2932,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	// Add model internal pointers to .lev patch table
 	for (const std::string& modelName : modelOrder)
 	{
-		const std::vector<uint8_t>& ctrmodelData = m_importedModels.at(modelName);
+		const std::vector<uint8_t>& ctrmodelData = m_instanceModels.at(modelName).GetRawData();
 		size_t modelBaseOffset = modelOffsets[modelName];
 
 		// Parse .ctrmodel to get patch table
@@ -2963,8 +2958,16 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	}
 
 
-	for (size_t leafOffset : leafOffsetHitbox) { pointerMap.push_back(CALCULATE_OFFSET(PSX::BSPLeaf, offHitbox, leafOffset)); }
-	for (size_t hitboxOffset : hitboxOffsets) { pointerMap.push_back(CALCULATE_OFFSET(PSX::InstHitbox, offInstDef, hitboxOffset)); }
+	// Add BSP-leaf hitbox pointers: each leaf's offHitbox field, plus the
+	// InstDef pointer inside every hitbox entry
+	for (const LeafHitboxList& list : leafHitboxLists)
+	{
+		pointerMap.push_back(CALCULATE_OFFSET(PSX::BSPLeaf, offHitbox, list.leafFileOffset));
+		for (size_t i = 0; i < list.entries.size(); i++)
+		{
+			pointerMap.push_back(CALCULATE_OFFSET(PSX::InstHitbox, offInstDef, list.listFileOffset + (i * sizeof(PSX::InstHitbox))));
+		}
+	}
 
 	if (offTropyGhost != 0) { pointerMap.push_back(CALCULATE_OFFSET(PSX::LevelExtraHeader, offsets[PSX::LevelExtra::N_TROPY_GHOST], offExtraHeader)); }
 	if (offOxideGhost != 0) { pointerMap.push_back(CALCULATE_OFFSET(PSX::LevelExtraHeader, offsets[PSX::LevelExtra::N_OXIDE_GHOST], offExtraHeader)); }
@@ -3097,8 +3100,12 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	}
 	Write(file, &nullTerm, sizeof(nullTerm));
 
-	// Hitbox, not deduplicated.
-	for (const std::vector<uint8_t>&serializedHb : serializedLeafHitboxLists) { Write(file, serializedHb.data(), serializedHb.size()); }
+	// Write BSP-leaf instance hitbox lists (each NULL-terminated)
+	for (const LeafHitboxList& list : leafHitboxLists)
+	{
+		Write(file, list.entries.data(), list.entries.size() * sizeof(PSX::InstHitbox));
+		Write(file, &nullTerm, sizeof(nullTerm));
+	}
 
 	uint32_t fourBytesOfZero = 0;
 	if (paddingSizeForMultOfFour > 0)
@@ -3856,8 +3863,9 @@ bool Level::UpdateVRM()
 
 	// Extract textures from imported models
 	m_modelTexturesInVRAM.clear();
-	for (const auto& [modelName, ctrmodelData] : m_importedModels)
+	for (auto& [modelName, instModel] : m_instanceModels)
 	{
+		const std::vector<uint8_t>& ctrmodelData = instModel.GetRawData();
 		const SH::CtrModel* ctrHeader = reinterpret_cast<const SH::CtrModel*>(ctrmodelData.data());
 
 		// Skip if no texture section
@@ -4737,28 +4745,28 @@ void Level::GenerateRenderInstanceData()
 		Model* childModel = instanceModel->AddModel();
 		if (!modelName.empty())
 		{
-			auto cacheIt = m_parsedModelCache.find(modelName);
-			if (cacheIt == m_parsedModelCache.end())
+			auto it = m_instanceModels.find(modelName);
+			if (it != m_instanceModels.end())
 			{
-				auto importIt = m_importedModels.find(modelName);
-				if (importIt != m_importedModels.end())
+				InstanceModel& instModel = it->second;
+				if (!instModel.IsParsed())
 				{
 					std::string texCacheDir = (std::filesystem::temp_directory_path() / "CTE_tex_cache").string();
-					std::vector<Primitive> primitives = ParseCtrModelGeometry(importIt->second, texCacheDir, modelName);
+					std::vector<Primitive> primitives = ParseCtrModelGeometry(instModel.GetRawData(), texCacheDir, modelName);
 					if (!primitives.empty())
 					{
-						m_parsedModelCache[modelName] = primitives;
-						cacheIt = m_parsedModelCache.find(modelName);
+						instModel.GetParsedGeometry() = std::move(primitives);
+						instModel.SetParsed(true);
 					}
 				}
-			}
 
-			if (cacheIt != m_parsedModelCache.end() && !cacheIt->second.empty())
-			{
-				childModel->GetMesh().SetGeometry(
-					cacheIt->second,
-					Mesh::RenderFlags::DrawBackfaces | Mesh::RenderFlags::DontOverrideRenderFlags
-				);
+				if (instModel.IsParsed() && !instModel.GetParsedGeometry().empty())
+				{
+					childModel->GetMesh().SetGeometry(
+						instModel.GetParsedGeometry(),
+						Mesh::RenderFlags::DrawBackfaces | Mesh::RenderFlags::DontOverrideRenderFlags
+					);
+				}
 			}
 		}
 		childModel->SetPosition(inst.GetPos());

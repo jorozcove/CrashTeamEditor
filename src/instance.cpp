@@ -1,5 +1,11 @@
 #include "instance.h"
 
+InstanceModel::InstanceModel(std::string name, std::vector<uint8_t> rawData)
+	: m_name(std::move(name))
+	, m_rawData(std::move(rawData))
+{
+}
+
 Instance::Instance(std::string model)
 {
 	m_name = "NewInstance";
@@ -49,7 +55,7 @@ BoundingBox Instance::ComputeBBox()
 }
 
 
-std::vector<uint8_t> Instance::SerializeHitbox(uint32_t insatnceOffset) const
+PSX::InstHitbox Instance::SerializeHitbox(uint32_t insatnceOffset) const
 {	// Don't call on Instances that have hitbox disabled. 
 	// Serialization will still work, but shouldn't be called.
 
@@ -66,7 +72,5 @@ std::vector<uint8_t> Instance::SerializeHitbox(uint32_t insatnceOffset) const
 	hitbox.padding = 0;
 	hitbox.offInstDef = insatnceOffset;
 
-	std::vector<uint8_t> buffer(sizeof(PSX::InstHitbox));
-	std::memcpy(buffer.data(), &hitbox, sizeof(PSX::InstHitbox));
-	return buffer;
+	return hitbox;
 }

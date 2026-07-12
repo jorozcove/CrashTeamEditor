@@ -319,7 +319,7 @@ void BotPath::RenderUI(int pathIndex)
 }
 
 
-bool Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, std::unordered_map<std::string, std::vector<uint8_t>>& importedModels, Vec3& queryPoint)
+bool Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, const std::vector<std::string>& modelNames, Vec3& queryPoint)
 {
 	bool modelChanged = false;
 
@@ -329,7 +329,7 @@ bool Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, st
 		// Model selection dropdown
 		if (ImGui::BeginCombo("Model", m_modelName.c_str()))
 		{
-			for (const auto& [name, _] : importedModels)
+			for (const std::string& name : modelNames)
 			{
 				bool isSelected = (m_modelName == name);
 				if (ImGui::Selectable(name.c_str(), isSelected))
@@ -1748,19 +1748,19 @@ void Level::RenderUI(Renderer& renderer)
 
 			// Show list of currently loaded models
 			ImGui::Separator();
-			if (ImGui::TreeNodeEx(("Loaded Models (" + std::to_string(m_importedModels.size()) + ")##modelsList").c_str(), 0))
+			if (ImGui::TreeNodeEx(("Loaded Models (" + std::to_string(m_instanceModels.size()) + ")##modelsList").c_str(), 0))
 			{
 				ImGui::Separator();
 
-				if (!m_importedModels.empty())
+				if (!m_instanceModels.empty())
 				{
 					std::string modelToDelete;
-					for (const auto& [modelName, modelData] : m_importedModels)
+					for (const auto& [modelName, instModel] : m_instanceModels)
 					{
 						ImGui::PushID(modelName.c_str());
 						ImGui::Text("%s", modelName.c_str());
 						ImGui::SameLine();
-						ImGui::Text("(%zu bytes)", modelData.size());
+						ImGui::Text("(%zu bytes)", instModel.GetRawData().size());
 						ImGui::SameLine(ImGui::GetContentRegionAvail().x - 20);
 						if (ImGui::Button("X"))
 						{
@@ -1772,7 +1772,7 @@ void Level::RenderUI(Renderer& renderer)
 					// Delete the model after iteration to avoid iterator invalidation
 					if (!modelToDelete.empty())
 					{
-						m_importedModels.erase(modelToDelete);
+						m_instanceModels.erase(modelToDelete);
 						m_logMessage = "Removed model: " + modelToDelete;
 						m_showLogWindow = true;
 					}
@@ -1791,7 +1791,7 @@ void Level::RenderUI(Renderer& renderer)
 			ImGui::Separator();
 
 			// Add Instance button
-			bool hasModels = !m_importedModels.empty();
+			bool hasModels = !m_instanceModels.empty();
 			if (!hasModels)
 			{
 				ImGui::BeginDisabled();
@@ -1799,7 +1799,7 @@ void Level::RenderUI(Renderer& renderer)
 
 			if (ImGui::Button("+ Add Instance"))
 			{
-				m_instances.emplace_back(m_importedModels.begin()->first);
+				m_instances.emplace_back(m_instanceModels.begin()->first);
 				GenerateRenderInstanceData();
 			}
 
@@ -1925,7 +1925,9 @@ void Level::RenderUI(Renderer& renderer)
 				ImGui::PushID(static_cast<int>(i));
 				bool shouldDelete = false;
 				bool shouldDuplicate = false;
-				if (m_instances[i].RenderUI(shouldDelete, shouldDuplicate, static_cast<int>(i), m_importedModels, m_rendererQueryPoint))
+				std::vector<std::string> modelNames;
+				for (const auto& [name, _] : m_instanceModels) { modelNames.push_back(name); }
+				if (m_instances[i].RenderUI(shouldDelete, shouldDuplicate, static_cast<int>(i), modelNames, m_rendererQueryPoint))
 					renderInstanceNeedsUpdate = true;
 				if (shouldDelete)
 					instanceToDelete = i;
