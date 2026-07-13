@@ -74,34 +74,40 @@ bool BotPath::IsValid()
     return m_nodes.size() > 1;
 }
 
-bool isAboveQuad(const Vec3& point, const Quadblock& quad, float& height)
-    //Helper function : is a point above a quadblock ?
-    //Modify height
+static bool TestBarycentric(const Vec3& A, const Vec3& B, const Vec3& C, const Vec3& point, float& height, Vec3* normal)
+{
+    const float d1 = (B.x - A.x) * (point.z - A.z) - (B.z - A.z) * (point.x - A.x);
+    const float d2 = (C.x - B.x) * (point.z - B.z) - (C.z - B.z) * (point.x - B.x);
+    const float d3 = (A.x - C.x) * (point.z - C.z) - (A.z - C.z) * (point.x - C.x);
+    if ((d1 < -EPSILON || d2 < -EPSILON || d3 < -EPSILON) && (d1 > EPSILON || d2 > EPSILON || d3 > EPSILON))
+        return false;
+
+    const float denom = (B.z - C.z) * (A.x - C.x) + (C.x - B.x) * (A.z - C.z);
+    if (std::abs(denom) < EPSILON)
+        return false;
+
+    const float u = ((B.z - C.z) * (point.x - C.x) + (C.x - B.x) * (point.z - C.z)) / denom;
+    const float v = ((C.z - A.z) * (point.x - C.x) + (A.x - C.x) * (point.z - C.z)) / denom;
+    const float w = 1.0f - u - v;
+
+    height = u * A.y + v * B.y + w * C.y;
+    if (normal)
+    {
+        Vec3 edge1 = B - A;
+        Vec3 edge2 = C - A;
+        *normal = edge1.Cross(edge2);
+        normal->Normalize();
+    }
+    return true;
+}
+
+bool isAboveQuad(const Vec3& point, const Quadblock& quad, float& height, Vec3* normal)
 {
     const Vertex* verts = quad.GetUnswizzledVertices();
-    for (const std::array<size_t, 3>&ids : quad.GetCollTriFacesIndexes())
+    for (const std::array<size_t, 3>& ids : quad.GetCollTriFacesIndexes())
     {
-        const Vec3& A = verts[ids[0]].m_pos;
-        const Vec3& B = verts[ids[1]].m_pos;
-        const Vec3& C = verts[ids[2]].m_pos;
-        const float d1 = (B.x - A.x) * (point.z - A.z) - (B.z - A.z) * (point.x - A.x);
-        const float d2 = (C.x - B.x) * (point.z - B.z) - (C.z - B.z) * (point.x - B.x);
-        const float d3 = (A.x - C.x) * (point.z - C.z) - (A.z - C.z) * (point.x - C.x);
-        if ((d1 < -EPSILON || d2 < -EPSILON || d3 < -EPSILON) && (d1 > EPSILON || d2 > EPSILON || d3 > EPSILON))
-        {
-            continue; // Point outisde of Tri
-        }
-
-        const float denom = (B.z - C.z) * (A.x - C.x) + (C.x - B.x) * (A.z - C.z);
-        if (std::abs(denom) < EPSILON)
-            continue; // degenerate triangle, skip
-
-        const float u = ((B.z - C.z) * (point.x - C.x) + (C.x - B.x) * (point.z - C.z)) / denom;
-        const float v = ((C.z - A.z) * (point.x - C.x) + (A.x - C.x) * (point.z - C.z)) / denom;
-        const float w = 1.0f - u - v;
-
-        height = u * A.y + v * B.y + w * C.y;
-        return true;
+        if (TestBarycentric(verts[ids[0]].m_pos, verts[ids[1]].m_pos, verts[ids[2]].m_pos, point, height, normal))
+            return true;
     }
     return false;
 }
@@ -134,7 +140,7 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
             for (const Quadblock& quad : quadblocks)
             {
                 const BoundingBox& bb = quad.GetBoundingBox();
-                // Closest point on the AABB to pos — clamp each axis independently
+                // Closest point on the AABB to pos ï¿½ clamp each axis independently
                 float cx = std::clamp(pos.x, bb.min.x, bb.max.x);
                 float cy = std::clamp(pos.y, bb.min.y, bb.max.y);
                 float cz = std::clamp(pos.z, bb.min.z, bb.max.z);
@@ -317,7 +323,7 @@ bool BotPath::GeneratePath(std::vector<Vec3>& nodesPos, std::vector<Quadblock>& 
         }
     }
 
-    // --- Step 4: After trimming, some chunks may now be too short — repeat step 2 ---
+    // --- Step 4: After trimming, some chunks may now be too short ï¿½ repeat step 2 ---
     chunks = buildChunks();
     for (auto& c : chunks) {
         if (chunkDist(c.start, c.end) < MIN_DRIFT_DIST) {

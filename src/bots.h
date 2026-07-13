@@ -158,4 +158,4 @@ private:
 
 std::vector<Vec3> NormalizePos(const std::vector<Vec3>& pos, float dist);
 std::vector<Vec3> GenerateLateralPath(const std::vector<BotNode>& nodes, float lateralOffset, std::vector<Quadblock>& quadblocks);
-bool isAboveQuad(const Vec3& point, const Quadblock& quad, float& height);
+bool isAboveQuad(const Vec3& point, const Quadblock& quad, float& height, Vec3* normal = nullptr);

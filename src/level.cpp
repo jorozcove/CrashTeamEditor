@@ -329,6 +329,16 @@ std::string Level::GenerateUniqueInstanceName(const std::string& name) const
 	return stripped + "#" + std::to_string(maxN + 1);
 }
 
+bool Level::QueryGround(const Vec3& pos, float& height, Vec3& normal) const
+{
+	for (const auto& quad : m_quadblocks)
+	{
+		if (isAboveQuad(pos, quad, height, &normal))
+			return true;
+	}
+	return false;
+}
+
 bool Level::GenerateInstanceRow(int checkpointIndex, size_t instanceIndex, int numInstances, float spacing, bool deleteAfter)
 {
 	if (m_checkpoints.empty())
@@ -353,12 +363,24 @@ bool Level::GenerateInstanceRow(int checkpointIndex, size_t instanceIndex, int n
 	else
 		forward = Vec3(0.0f, 0.0f, 1.0f);
 
-	Vec3 upVec = { 0.0f, 1.0f, 0.0f };
-	forward.y = 0;
+	Vec3 groundNormal;
+	float groundHeight;
+	if (QueryGround(center, groundHeight, groundNormal))
+	{
+		center.y = groundHeight;
+		forward = forward - groundNormal * forward.Dot(groundNormal);
+	}
+	else
+	{
+		forward.y = 0;
+		groundNormal = Vec3(0.0f, 1.0f, 0.0f);
+	}
+
 	float yaw = -std::atan2(forward.z, forward.x) * (180.0f / 3.14159265f);
 	yaw = std::fmod(yaw, 360.0f);
 	forward.Normalize();
-	Vec3 right = forward.Cross(upVec);
+	Vec3 right = forward.Cross(groundNormal);
+	right.Normalize();
 
 	Instance original = m_instances[instanceIndex];
 	size_t insertPos = instanceIndex + 1;
@@ -369,11 +391,28 @@ bool Level::GenerateInstanceRow(int checkpointIndex, size_t instanceIndex, int n
 		Vec3 pos = center + right * lateralOffset;
 
 		Instance newInstance = original;
-
 		newInstance.SetName(GenerateUniqueInstanceName(original.GetName()));
 
-		newInstance.SetPos(pos);
-		newInstance.SetRot(Vec3(0.0f, yaw, 0.0f));
+		float instHeight;
+		Vec3 instNormal;
+		if (QueryGround(pos, instHeight, instNormal))
+		{
+			pos.y = instHeight;
+			if (instNormal.y < 0.0f)
+				instNormal = instNormal * -1.0f;
+			float yawRad = yaw * (3.14159265f / 180.0f);
+			float nzLocal = instNormal.x * std::sin(yawRad) + instNormal.z * std::cos(yawRad);
+			float nxLocal = instNormal.x * std::cos(yawRad) - instNormal.z * std::sin(yawRad);
+			float pitch = std::asin(std::min(std::max(nzLocal, -1.0f), 1.0f)) * (180.0f / 3.14159265f);
+			float roll = std::atan2(-nxLocal, instNormal.y) * (180.0f / 3.14159265f);
+			newInstance.SetPos(pos);
+			newInstance.SetRot(Vec3(pitch, yaw, roll));
+		}
+		else
+		{
+			newInstance.SetPos(pos);
+			newInstance.SetRot(Vec3(0.0f, yaw, 0.0f));
+		}
 
 		m_instances.insert(m_instances.begin() + insertPos + col, newInstance);
 	}
