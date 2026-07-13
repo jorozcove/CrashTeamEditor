@@ -1991,7 +1991,7 @@ void Level::RenderUI(Renderer& renderer)
 					Model* geom = instanceModel->GetModel(i * 2);
 					if (geom) {
 						geom->SetPosition(pos);
-						geom->SetRotation(inst.GetRot());
+						geom->SetRotationYXZ(inst.GetRot());
 						geom->SetScale(inst.GetScale());
 					}
 

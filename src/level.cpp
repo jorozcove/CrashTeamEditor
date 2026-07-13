@@ -1900,7 +1900,11 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 			inst.SetName(std::string(psxInst.name, strnlen(psxInst.name, sizeof(psxInst.name))));
 			inst.SetScale(ConvertPSXVec3(psxInst.scale, FP_ONE));
 			inst.SetPos(ConvertPSXVec3(psxInst.pos, FP_ONE_GEO));
-			inst.SetRot(ConvertPSXAngle(psxInst.rot));
+			Vec3 rot = ConvertPSXAngle(psxInst.rot);
+			rot.x = -rot.x;
+			rot.y += 180.0f;
+			rot.z = -rot.z;
+			inst.SetRot(rot);
 			inst.SetModelID(static_cast<ModelId>(psxInst.modelID));
 			inst.SetColor(ConvertColor(psxInst.colorRGBA));
 			inst.SetFlags(psxInst.flags);
@@ -4770,7 +4774,7 @@ void Level::GenerateRenderInstanceData()
 			}
 		}
 		childModel->SetPosition(inst.GetPos());
-		childModel->SetRotation(inst.GetRot());
+		childModel->SetRotationYXZ(inst.GetRot());
 		childModel->SetScale(inst.GetScale());
 
 		// Label with instance name

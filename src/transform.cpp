@@ -52,6 +52,18 @@ void Transform::SetRotation(const Vec3& rotation)
 	UpdateModelMatrix();
 }
 
+void Transform::SetRotationYXZ(const Vec3& rotation)
+{
+	float x = glm::radians(rotation.x);
+	float y = glm::radians(rotation.y);
+	float z = glm::radians(rotation.z);
+	glm::quat qX = glm::angleAxis(x, glm::vec3(1.0f, 0.0f, 0.0f));
+	glm::quat qY = glm::angleAxis(y, glm::vec3(0.0f, 1.0f, 0.0f));
+	glm::quat qZ = glm::angleAxis(z, glm::vec3(0.0f, 0.0f, 1.0f));
+	m_rotation = qY * qX * qZ;
+	UpdateModelMatrix();
+}
+
 void Transform::SetParentMatrix(const glm::mat4& matrix)
 {
 	m_parentMatrix = matrix;

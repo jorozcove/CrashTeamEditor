@@ -15,6 +15,7 @@ public:
 	void SetScale(float scale);
 	void MultScale(float factor);
 	void SetRotation(const Vec3& rotation);
+	void SetRotationYXZ(const Vec3& rotation);
 	Vec3 GetPosition() const;
 	Vec3 GetScale() const;
 	Vec3 GetRotation() const;
