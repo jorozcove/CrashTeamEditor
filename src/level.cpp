@@ -275,7 +275,7 @@ bool Level::GenerateSpawn(float colSpacing, float rowSpacing)
 		{
 			int index = row * 4 + col;
 			float lateralOffset = (col - 1.5f) * colSpacing;
-			float forwardOffset = (row - 0.5f) * rowSpacing;
+			float forwardOffset = (0.5f - row) * rowSpacing;
 			Vec3 pos = center + right * lateralOffset + forward * forwardOffset;
 			bool isInRange = false;
 			int lastCkpt = m_checkpoints[0].GetDown();
@@ -331,12 +331,26 @@ std::string Level::GenerateUniqueInstanceName(const std::string& name) const
 
 bool Level::QueryGround(const Vec3& pos, float& height, Vec3& normal) const
 {
+	constexpr float GROUND_THRESHOLD = 50.0f;
+	float bestDist = GROUND_THRESHOLD;
+	bool found = false;
 	for (const auto& quad : m_quadblocks)
 	{
-		if (isAboveQuad(pos, quad, height, &normal))
-			return true;
+		float h = 0.0f;
+		Vec3 n;
+		if (isAboveQuad(pos, quad, h, &n))
+		{
+			const float dist = std::abs(pos.y - h);
+			if (dist < bestDist)
+			{
+				bestDist = dist;
+				height = h;
+				normal = n;
+				found = true;
+			}
+		}
 	}
-	return false;
+	return found;
 }
 
 bool Level::GenerateInstanceRow(int checkpointIndex, size_t instanceIndex, int numInstances, float spacing, bool deleteAfter)
