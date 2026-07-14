@@ -1967,7 +1967,11 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 					inst.SetModelName("LEV_Model_0x" + std::to_string(psxInst.offModel));
 				}
 			}
-
+			if (!m_instanceModels.contains(inst.GetModelName()))
+			{
+				printf("Can't import instance %s because model %s is not imported\n", inst.GetName().c_str(), inst.GetModelName().c_str());
+				continue;
+			}
 			instPSXPos.push_back(psxInst.pos);
 			m_instances.push_back(inst);
 		}
@@ -2112,7 +2116,7 @@ std::vector<uint8_t> Level:: SerializeModel(const std::string& modelName, std::u
 				int deltaU = newOriginU - tex.originU;
 				int deltaV = newOriginV - tex.originV;
 
-				printf("uvs stuff\n");
+				/*printf("uvs stuff\n");
 
 				if (deltaU != 0 || deltaV != 0)
 				{
@@ -2120,7 +2124,7 @@ std::vector<uint8_t> Level:: SerializeModel(const std::string& modelName, std::u
 						modelName.c_str(), tex.textureIndex, tex.originU, tex.originV, newOriginU, newOriginV, deltaU, deltaV);
 					printf("  vramX=%zu vramY=%zu, texpage=(%d,%d), bpp=%d, stretch=%d\n",
 						vramX, vramY, layout->texPage.x, layout->texPage.y, tex.bpp, uvStretch);
-				}
+				}*/
 
 				// Adjust all UV coordinates
 				layout->u0 = static_cast<uint8_t>(layout->u0 + deltaU);
@@ -2199,16 +2203,16 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 
 	PSX::LevHeader header = {};
 	const size_t offHeader = 0;
-	printf(nameof(offHeader) " = %zx\n", offHeader);
+	//printf(nameof(offHeader) " = %zx\n", offHeader);
 	size_t currOffset = sizeof(header);
 
 	PSX::MeshInfo meshInfo = {};
 	const size_t offMeshInfo = currOffset;
-	printf(nameof(offMeshInfo) " = %zx\n", offMeshInfo);
+	//printf(nameof(offMeshInfo) " = %zx\n", offMeshInfo);
 	currOffset += sizeof(meshInfo);
 
 	const size_t offTexture = currOffset;
-	printf(nameof(offTexture) " = %zx\n", offTexture);
+	//printf(nameof(offTexture) " = %zx\n", offTexture);
 	size_t offAnimData = 0;
 
 	PSX::TextureLayout defaultTex = {};
@@ -2451,7 +2455,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 				}
 
   			offAnimData = currOffset + (sizeof(PSX::TextureGroup) * texGroups.size());
-	  		printf(nameof(offAnimData) " = %zx\n", offAnimData);
+	  		//printf(nameof(offAnimData) " = %zx\n", offAnimData);
 
 				animPtrMapOffsets.push_back(animData.size());
 				size_t offEndAnimData = animData.size();
@@ -2488,7 +2492,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 		{
 			texGroups.push_back(defaultTexGroup);
 			offAnimData = currOffset + (sizeof(PSX::TextureGroup) * texGroups.size());
-			printf(nameof(offAnimData) " = %zx\n", offAnimData);
+			//printf(nameof(offAnimData) " = %zx\n", offAnimData);
 			for (size_t i = 0; i < sizeof(uint32_t); i++) { animData.push_back(0); }
 			memcpy(&animData[0], &offAnimData, sizeof(uint32_t));
 			animPtrMapOffsets.push_back(0);
@@ -2499,7 +2503,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	currOffset += (sizeof(PSX::TextureGroup) * texGroups.size()) + animData.size();
 
 	const size_t offQuadblocks = currOffset;
-	printf(nameof(offQuadblocks) " = %zx\n", offQuadblocks);
+	//printf(nameof(offQuadblocks) " = %zx\n", offQuadblocks);
 	std::vector<std::vector<uint8_t>> serializedBSPs;
 	std::vector<std::vector<uint8_t>> serializedQuads;
 	std::vector<const Quadblock*> orderedQuads;
@@ -2612,7 +2616,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	std::unordered_map<PSX::VisibleSet, size_t> visibleSetMap;
 	std::vector<PSX::VisibleSet> visibleSets;
 	const size_t offVisibleSet = currOffset;
-	printf(nameof(offVisibleSet) " = %zx\n", offVisibleSet);
+	//printf(nameof(offVisibleSet) " = %zx\n", offVisibleSet);
 
 	for (size_t quadCount = 0; quadCount < orderedQuads.size(); quadCount++)
 	{
@@ -2638,11 +2642,11 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 		PSX::Quadblock* serializedQuad = reinterpret_cast<PSX::Quadblock*>(serializedQuads[quadCount].data());
 		serializedQuad->offVisibleSet = static_cast<uint32_t>(offVisibleSet + sizeof(PSX::VisibleSet) * visibleSetIndex);
 	}
-	printf("visibleSetsSize %d\n", visibleSets.size());
+	//printf("visibleSetsSize %d\n", visibleSets.size());
 	currOffset += visibleSets.size() * sizeof(PSX::VisibleSet);
 
 	const size_t offVertices = currOffset;
-	printf(nameof(offVertices) " = %zx\n", offVertices);
+	//printf(nameof(offVertices) " = %zx\n", offVertices);
 	std::vector<std::vector<uint8_t>> serializedVertices;
 	for (const Vertex& vertex : orderedVertices)
 	{
@@ -2651,7 +2655,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	}
 
 	const size_t offBSP = currOffset;
-	printf(nameof(offBSP) " = %zx\n", offBSP);
+	//printf(nameof(offBSP) " = %zx\n", offBSP);
 	currOffset += bspSize;
 
 	meshInfo.numQuadblocks = static_cast<uint32_t>(serializedQuads.size());
@@ -2664,7 +2668,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	meshInfo.numBSPNodes = static_cast<uint32_t>(serializedBSPs.size());
 
 	const size_t offCheckpoints = currOffset;
-	printf(nameof(offCheckpoints) " = %zx\n", offCheckpoints);
+	//printf(nameof(offCheckpoints) " = %zx\n", offCheckpoints);
 	std::vector<std::vector<uint8_t>> serializedCheckpoints;
 	for (const Checkpoint& checkpoint : m_checkpoints)
 	{
@@ -2673,11 +2677,11 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	}
 
 	const size_t offTropyGhost = m_tropyGhost.empty() ? 0 : currOffset;
-	printf(nameof(offTropyGhost) " = %zx\n", offTropyGhost);
+	//printf(nameof(offTropyGhost) " = %zx\n", offTropyGhost);
 	currOffset += m_tropyGhost.size();
 
 	const size_t offOxideGhost = m_oxideGhost.empty() ? 0 : currOffset;
-	printf(nameof(offOxideGhost) " = %zx\n", offOxideGhost);
+	//printf(nameof(offOxideGhost) " = %zx\n", offOxideGhost);
 	currOffset += m_oxideGhost.size();
 
 	PSX::LevelExtraHeader extraHeader = {};
@@ -2696,7 +2700,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	extraHeader.offsets[PSX::LevelExtra::CREDITS] = 0;
 
 	const size_t offExtraHeader = currOffset;
-	printf(nameof(offExtraHeader) " = %zx\n", offExtraHeader);
+	//printf(nameof(offExtraHeader) " = %zx\n", offExtraHeader);
 	currOffset += sizeof(extraHeader);
 
 	constexpr size_t BOT_PATH_COUNT = 3;
@@ -2723,17 +2727,17 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 
 	std::vector<uint32_t> visMemNodesP1(visNodeSize);
 	const size_t offVisMemNodesP1 = currOffset;
-	printf(nameof(offVisMemNodesP1) " = %zx\n", offVisMemNodesP1);
+	//printf(nameof(offVisMemNodesP1) " = %zx\n", offVisMemNodesP1);
 	currOffset += visMemNodesP1.size() * sizeof(uint32_t);
 
 	std::vector<uint32_t> visMemQuadsP1(visQuadSize);
 	const size_t offVisMemQuadsP1 = currOffset;
-	printf(nameof(offVisMemQuadsP1) " = %zx\n", offVisMemQuadsP1);
+	//printf(nameof(offVisMemQuadsP1) " = %zx\n", offVisMemQuadsP1);
 	currOffset += visMemQuadsP1.size() * sizeof(uint32_t);
 
 	std::vector<uint32_t> visMemBSPP1(bspNodes.size() * 2);
 	const size_t offVisMemBSPP1 = currOffset;
-	printf(nameof(offVisMemBSPP1) " = %zx\n", offVisMemBSPP1);
+	//printf(nameof(offVisMemBSPP1) " = %zx\n", offVisMemBSPP1);
 	currOffset += visMemBSPP1.size() * sizeof(uint32_t);
 
 	PSX::VisualMem visMem = {};
@@ -2741,7 +2745,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	visMem.offQuads[0] = static_cast<uint32_t>(offVisMemQuadsP1);
 	visMem.offBSP[0] = static_cast<uint32_t>(offVisMemBSPP1);
 	const size_t offVisMem = currOffset;
-  printf(nameof(offVisMem) " = %zx\n", offVisMem);
+  //printf(nameof(offVisMem) " = %zx\n", offVisMem);
 	currOffset += sizeof(visMem);
 
 	size_t offSkyboxData = 0;
@@ -2751,7 +2755,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	if (m_skybox.IsReady())
 	{
 		offSkyboxData = currOffset;
-		printf(nameof(offSkyboxData) " = %zx\n", offSkyboxData);
+		//printf(nameof(offSkyboxData) " = %zx\n", offSkyboxData);
 		skyboxData = m_skybox.Serialize(offSkyboxData, skyboxPtrMapOffsets);
 		currOffset += skyboxData.size();
 	}
@@ -2807,23 +2811,23 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 
 		const size_t offInstDef = currOffset;
 		instDefOffsets.push_back(offInstDef);
-		printf("offInstDef[%zu] = %zx\n", i, offInstDef);
+		//printf("offInstDef[%zu] = %zx\n", i, offInstDef);
 		currOffset += sizeof(PSX::InstDef);
 	}
 
 	// Write InstDef pointer array (NULL-terminated)
 	const size_t offInstDefList_ptrArray = currOffset;
-	printf(nameof(offInstDefList_ptrArray) " = %zx\n", offInstDefList_ptrArray);
+	//printf(nameof(offInstDefList_ptrArray) " = %zx\n", offInstDefList_ptrArray);
 	currOffset += (instDefOffsets.size() + 1) * sizeof(uint32_t);
 
 	// Write second InstDef pointer array for visibility (NULL-terminated)
 	const size_t offInstDefList2_ptrArray = currOffset;
-	printf(nameof(offInstDefList2_ptrArray) " = %zx\n", offInstDefList2_ptrArray);
+	//printf(nameof(offInstDefList2_ptrArray) " = %zx\n", offInstDefList2_ptrArray);
 	currOffset += (instDefOffsets.size() + 1) * sizeof(uint32_t);
 
 	// Write third InstDef pointer array for visibility even quadcount (NULL-terminated)
 	const size_t offInstDefList3_ptrArray = currOffset;
-	printf(nameof(offInstDefList3_ptrArray) " = %zx\n", offInstDefList3_ptrArray);
+	//printf(nameof(offInstDefList3_ptrArray) " = %zx\n", offInstDefList3_ptrArray);
 	currOffset += (instDefOffsets.size() + 1) * sizeof(uint32_t);
 
 	// Update visible sets to point to InstDef list
@@ -2849,12 +2853,17 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 
 	for (const std::string& modelName : modelOrder)
 	{
+		if (!m_instanceModels.contains(modelName))
+		{
+			printf("Model : %s not in m_instanceModels\n", modelName.c_str());
+			continue;
+		}
+			
+		
 		const std::vector<uint8_t>& ctrmodelData = m_instanceModels.at(modelName).GetRawData();
-
 		// Parse .ctrmodel to get model data size
 		const SH::CtrModel* ctrHeader = reinterpret_cast<const SH::CtrModel*>(ctrmodelData.data());
 		size_t modelDataSize = ctrHeader->modelPatchTableOffset - ctrHeader->modelOffset;
-
 		const size_t offModel = currOffset;
 		modelOffsets[modelName] = offModel;
 		printf("offModel[%s] = %zx (%zu bytes)\n", modelName.c_str(), offModel, modelDataSize);
@@ -2863,7 +2872,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 
 	// Write Model pointer array (NULL-terminated)
 	const size_t offModelList_ptrArray = currOffset;
-	printf(nameof(offModelList_ptrArray) " = %zx\n", offModelList_ptrArray);
+	//printf(nameof(offModelList_ptrArray) " = %zx\n", offModelList_ptrArray);
 	currOffset += (uniqueModelNames.size() + 1) * sizeof(uint32_t);
 	header.offModels = static_cast<uint32_t>(offModelList_ptrArray);
 
@@ -2919,7 +2928,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 				if (overlapping.empty()) { continue; }
 
 				leaf->offHitbox = static_cast<uint32_t>(currOffset);
-				printf("offLeafHitboxList[node %zu] = %zx (%zu entries)\n", node, currOffset, overlapping.size());
+				//printf("offLeafHitboxList[node %zu] = %zx (%zu entries)\n", node, currOffset, overlapping.size());
 				leafHitboxLists.push_back({currNodeOffset, currOffset, std::move(overlapping)});
 				currOffset += leafHitboxLists.back().entries.size() * sizeof(PSX::InstHitbox) + sizeof(uint32_t); // entries + terminator
 			}
@@ -2928,11 +2937,11 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	
 
 	size_t paddingSizeForMultOfFour = (4 - (currOffset % 4)) % 4;
-	printf(nameof(paddingSizeForMultOfFour) " = %zx\n", paddingSizeForMultOfFour);
+	//printf(nameof(paddingSizeForMultOfFour) " = %zx\n", paddingSizeForMultOfFour);
 	currOffset += paddingSizeForMultOfFour;
 
 	const size_t offPointerMap = currOffset;
-	printf(nameof(offPointerMap) " = %zx\n", offPointerMap);
+	//printf(nameof(offPointerMap) " = %zx\n", offPointerMap);
 
 	std::vector<uint32_t> pointerMap =
 	{
@@ -2975,6 +2984,8 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	// Add model internal pointers to .lev patch table
 	for (const std::string& modelName : modelOrder)
 	{
+		if (!m_instanceModels.contains(modelName))
+			continue;
 		const std::vector<uint8_t>& ctrmodelData = m_instanceModels.at(modelName).GetRawData();
 		size_t modelBaseOffset = modelOffsets[modelName];
 
