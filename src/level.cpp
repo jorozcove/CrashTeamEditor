@@ -1923,6 +1923,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 
 	// Load instances from .lev
 	std::vector<PSX::Vec3> instPSXPos;
+	std::unordered_map<uint32_t, size_t> offsetToInstancesID;
 	file.clear();
 	if (header.numInstances > 0 && header.offModelInstances != 0)
 	{
@@ -1973,6 +1974,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 				continue;
 			}
 			instPSXPos.push_back(psxInst.pos);
+			offsetToInstancesID[instPtrs[i]] = m_instances.size();
 			m_instances.push_back(inst);
 		}
 	}
@@ -1996,20 +1998,14 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 				if (!file.read(reinterpret_cast<char*>(&hitbox), sizeof(PSX::InstHitbox))) break;
 				if (hitbox.flags == 0 || hitbox.offInstDef == 0) break;
 
-				for (size_t i = 0; i < m_instances.size(); i++)
-				{
-					if (i >= instPSXPos.size()) continue;
-					if (instPtrs[i] == hitbox.offInstDef)
-					{
-						InstanceHitbox ihb;
-						ihb.enabled = true;
-						ihb.flags = hitbox.flags;
-						ihb.halfExtent = ConvertFP(hitbox.halfExtent, FP_ONE_GEO);
-						ihb.yOffset = ConvertFP(hitbox.center.y - instPSXPos[i].y, FP_ONE_GEO);
-						m_instances[i].SetHitbox(ihb);
-						break;
-					}
-				}
+				if (!offsetToInstancesID.contains(hitbox.offInstDef))
+					continue;
+				InstanceHitbox ihb;
+				ihb.enabled = true;
+				ihb.flags = hitbox.flags;
+				ihb.halfExtent = ConvertFP(hitbox.halfExtent, FP_ONE_GEO);
+				ihb.yOffset = ConvertFP(hitbox.center.y, FP_ONE_GEO) - m_instances[offsetToInstancesID[hitbox.offInstDef]].GetPos().y;
+				m_instances[offsetToInstancesID[hitbox.offInstDef]].SetHitbox(ihb);
 			}
 		}
 	}
