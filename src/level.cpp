@@ -1994,7 +1994,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 				file.clear();
 				file.seekg(offLev + std::streampos(offHitbox) + static_cast<std::streamoff>(hi * sizeof(PSX::InstHitbox)));
 				if (!file.read(reinterpret_cast<char*>(&hitbox), sizeof(PSX::InstHitbox))) break;
-				if (hitbox.flags == 0 && hitbox.offInstDef == 0) break;
+				if (hitbox.flags == 0 || hitbox.offInstDef == 0) break;
 
 				for (size_t i = 0; i < m_instances.size(); i++)
 				{
