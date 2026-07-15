@@ -172,7 +172,7 @@ namespace PSX
 		uint32_t offModels; // 0x18
 		uint32_t offUnk_0x1C; // 0x1C //ptr to a region of 160 0xff's
 		uint32_t offUnk_0x20; // 0x20 //ptr to a region of 68 0xff's
-		uint32_t offModelInstances; // 0x24
+		uint32_t offInstancePtrArray; // 0x24
 		uint32_t offUnk_0x28; // 0x28
 		uint32_t null_0x2C; // 0x2C
 		uint32_t null_0x30; // 0x30

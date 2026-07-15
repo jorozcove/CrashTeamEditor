@@ -293,9 +293,9 @@ void LevDataExtractor::ExtractModels(void)
 
 	// Build map from model offset -> list of InstDefs that reference that model
 	std::unordered_map<uint32_t, std::vector<const PSX::InstDef*>> modelOffsetToInstances;
-	if (levHeader.numInstances > 0 && levHeader.offModelInstances != 0)
+	if (levHeader.numInstances > 0 && levHeader.offInstancePtrArray != 0)
 	{
-		const uint32_t* instPtrArray = reinterpret_cast<const uint32_t*>(Deref(levHeader.offModelInstances));
+		const uint32_t* instPtrArray = reinterpret_cast<const uint32_t*>(Deref(levHeader.offInstancePtrArray));
 		for (uint32_t i = 0; i < levHeader.numInstances; i++)
 		{
 			if (instPtrArray[i] == 0) { break; }

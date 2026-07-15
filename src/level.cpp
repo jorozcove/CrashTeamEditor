@@ -1863,9 +1863,9 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	// Collect unique model offsets referenced by instances (quick pass: read only offModel per InstDef)
 	std::unordered_set<uint32_t> uniqueModelOffsets;
 	std::vector<uint32_t> instPtrs;
-	if (header.numInstances > 0 && header.offModelInstances != 0)
+	if (header.numInstances > 0 && header.offInstancePtrArray != 0)
 	{
-		file.seekg(offLev + std::streampos(header.offModelInstances));
+		file.seekg(offLev + std::streampos(header.offInstancePtrArray));
 		instPtrs.resize(header.numInstances);
 		for (uint32_t i = 0; i < header.numInstances; i++)
 		{
@@ -1925,7 +1925,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	std::vector<PSX::Vec3> instPSXPos;
 	std::unordered_map<uint32_t, size_t> offsetToInstancesID;
 	file.clear();
-	if (header.numInstances > 0 && header.offModelInstances != 0)
+	if (header.numInstances > 0 && header.offInstancePtrArray != 0)
 	{
 		instPSXPos.reserve(header.numInstances);
 		for (uint32_t i = 0; i < header.numInstances; i++)
@@ -2841,7 +2841,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 	}
 
 	header.offInstances = (m_instances.size() > 0) ? static_cast<uint32_t>(offInstDefArray) : 0;
-	header.offModelInstances = static_cast<uint32_t>(offInstDefList_ptrArray);
+	header.offInstancePtrArray = static_cast<uint32_t>(offInstDefList_ptrArray);
 
 	// Write Model data for each unique model
 	std::unordered_map<std::string, size_t> modelOffsets;
@@ -2944,7 +2944,7 @@ bool Level::SaveLEV(const std::filesystem::path& path, bool useRawTextures)
 		CALCULATE_OFFSET(PSX::LevHeader, offMeshInfo, offHeader),
 		CALCULATE_OFFSET(PSX::LevHeader, offInstances, offHeader),
 		CALCULATE_OFFSET(PSX::LevHeader, offModels, offHeader),
-		CALCULATE_OFFSET(PSX::LevHeader, offModelInstances, offHeader),
+		CALCULATE_OFFSET(PSX::LevHeader, offInstancePtrArray, offHeader),
 		CALCULATE_OFFSET(PSX::LevHeader, offExtra, offHeader),
 		CALCULATE_OFFSET(PSX::LevHeader, offCheckpointNodes, offHeader),
 		CALCULATE_OFFSET(PSX::LevHeader, offVisMem, offHeader),
