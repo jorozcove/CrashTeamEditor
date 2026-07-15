@@ -313,6 +313,7 @@ class Instance
 {
 public:
 	Instance(std::string model);
+	Instance(PSX::InstDef);
 
 	// Name
 	const std::string& GetName() const { return m_name; }
@@ -358,6 +359,7 @@ public:
 	const InstanceHitbox& GetHitbox() const { return m_hitbox; }
 	InstanceHitbox& GetHitbox() { return m_hitbox; }
 	void SetHitbox(const InstanceHitbox& hitbox) { m_hitbox = hitbox; }
+	void SetHitbox(const PSX::InstHitbox& hitbox);
 
 	BoundingBox ComputeBBox();
 	bool RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, const std::vector<std::string>& modelNames, Vec3& queryPoint);

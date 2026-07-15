@@ -21,6 +21,32 @@ Instance::Instance(std::string model)
 	m_hitbox = InstanceHitbox();
 }
 
+Instance::Instance(PSX::InstDef inst)
+{
+	m_name = std::string(inst.name, strnlen(inst.name, sizeof(inst.name)));
+	m_scale = ConvertPSXVec3(inst.scale, FP_ONE);
+	m_pos = ConvertPSXVec3(inst.pos, FP_ONE_GEO);
+	m_rot = ConvertPSXAngle(inst.rot);
+	m_rot.x = -m_rot.x;
+	m_rot.y += 180.0f;
+	m_rot.z = -m_rot.z;
+	m_modelID = static_cast<ModelId>(inst.modelID);
+	m_color = ConvertColor(inst.colorRGBA);
+	m_flags = inst.flags;
+	m_unk24 = inst.unk24;
+	m_unk28 = inst.unk28;
+
+	m_modelName = "";
+	m_hitbox = InstanceHitbox();
+}
+
+void Instance::SetHitbox(const PSX::InstHitbox& hitbox)
+{
+	m_hitbox.enabled = true;
+	m_hitbox.flags = hitbox.flags;
+	m_hitbox.halfExtent = ConvertFP(hitbox.halfExtent, FP_ONE_GEO);
+	m_hitbox.yOffset = ConvertFP(hitbox.center.y, FP_ONE_GEO) - m_pos.y;
+}
 
 std::vector<uint8_t> Instance::Serialize() const
 {

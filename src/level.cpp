@@ -1922,34 +1922,18 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 	}
 
 	// Load instances from .lev
-	std::vector<PSX::Vec3> instPSXPos;
 	std::unordered_map<uint32_t, size_t> offsetToInstancesID;
 	file.clear();
 	if (header.numInstances > 0 && header.offInstancePtrArray != 0)
 	{
-		instPSXPos.reserve(header.numInstances);
 		for (uint32_t i = 0; i < header.numInstances; i++)
 		{
-			if (instPtrs[i] == 0) { break; }
+			if (instPtrs[i] == 0) { break; } // shouldn't be continue ?
 
 			file.seekg(offLev + std::streampos(instPtrs[i]));
 			PSX::InstDef psxInst = {};
 			Read(file, psxInst);
-
-			Instance inst("");
-			inst.SetName(std::string(psxInst.name, strnlen(psxInst.name, sizeof(psxInst.name))));
-			inst.SetScale(ConvertPSXVec3(psxInst.scale, FP_ONE));
-			inst.SetPos(ConvertPSXVec3(psxInst.pos, FP_ONE_GEO));
-			Vec3 rot = ConvertPSXAngle(psxInst.rot);
-			rot.x = -rot.x;
-			rot.y += 180.0f;
-			rot.z = -rot.z;
-			inst.SetRot(rot);
-			inst.SetModelID(static_cast<ModelId>(psxInst.modelID));
-			inst.SetColor(ConvertColor(psxInst.colorRGBA));
-			inst.SetFlags(psxInst.flags);
-			inst.SetUnk24(psxInst.unk24);
-			inst.SetUnk28(psxInst.unk28);
+			Instance inst(psxInst);
 
 			// Look up model name from already-loaded models
 			if (psxInst.offModel != 0)
@@ -1973,7 +1957,6 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 				printf("Can't import instance %s because model %s is not imported\n", inst.GetName().c_str(), inst.GetModelName().c_str());
 				continue;
 			}
-			instPSXPos.push_back(psxInst.pos);
 			offsetToInstancesID[instPtrs[i]] = m_instances.size();
 			m_instances.push_back(inst);
 		}
@@ -2000,12 +1983,7 @@ bool Level::LoadLEV(const std::filesystem::path& levFile)
 
 				if (!offsetToInstancesID.contains(hitbox.offInstDef))
 					continue;
-				InstanceHitbox ihb;
-				ihb.enabled = true;
-				ihb.flags = hitbox.flags;
-				ihb.halfExtent = ConvertFP(hitbox.halfExtent, FP_ONE_GEO);
-				ihb.yOffset = ConvertFP(hitbox.center.y, FP_ONE_GEO) - m_instances[offsetToInstancesID[hitbox.offInstDef]].GetPos().y;
-				m_instances[offsetToInstancesID[hitbox.offInstDef]].SetHitbox(ihb);
+				m_instances[offsetToInstancesID[hitbox.offInstDef]].SetHitbox(hitbox);
 			}
 		}
 	}
