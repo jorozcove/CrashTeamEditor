@@ -331,12 +331,28 @@ std::string Level::GenerateUniqueInstanceName(const std::string& name) const
 
 bool Level::QueryGround(const Vec3& pos, float& height, Vec3& normal) const
 {
-	for (const auto& quad : m_quadblocks)
+	constexpr float GROUND_THRESHOLD = 8.0f;
+	float best_height = GROUND_THRESHOLD;
+	Vec3 best_normal(0.0f, 0.0f, 0.0f);
+	bool found = false;
+	for (const Quadblock& quad : m_quadblocks)
 	{
+		if (!(quad.GetFlags() & QuadFlags::GROUND))
+			continue;
+
 		if (isAboveQuad(pos, quad, height, &normal))
-			return true;
+		{
+			if (std::abs(height) < std::abs(best_height))
+			{
+				best_height = height;
+				best_normal = normal;
+				found = true;
+			}
+		}
 	}
-	return false;
+	normal = best_normal;
+	height = best_height;
+	return found;
 }
 
 bool Level::GenerateInstanceRow(int checkpointIndex, size_t instanceIndex, int numInstances, float spacing, bool deleteAfter)
