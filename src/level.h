@@ -12,6 +12,7 @@
 #include "animtexture.h"
 #include "model.h"
 #include "vistree.h"
+#include "minimap.h"
 #include "skybox.h"
 #include "bots.h"
 #include "instance.h"
@@ -39,7 +40,8 @@ namespace LevelModels
 	static constexpr size_t SKYBOX = 7;
 	static constexpr size_t BOT = 8;
 	static constexpr size_t INSTANCES = 9;
-	static constexpr size_t COUNT = 10;
+	static constexpr size_t MINIMAP_BOUNDS = 10;
+	static constexpr size_t COUNT = 11;
 };
 
 class Level
@@ -83,6 +85,7 @@ public:
 	bool GenerateVisTreeOnly();
 	void GenerateBotPathLeft();
 	bool HasRawTexture() const { return m_hasRawTexture; }
+	MinimapConfig& GetMinimapConfig();
 
 private:
 	void ManageTurbopad(Quadblock& quadblock);
@@ -116,6 +119,7 @@ private:
 	void GenerateRenderBspData();
 	void GenerateRenderInstanceData();
 	void GenerateRenderStartpointData();
+	void GenerateRenderMinimapBoundsData();
 	void GenerateRenderSkyboxData();
 	void GenerateRenderSelectedBlockData(const Quadblock& quadblock, const Vec3& queryPoint);
 	bool UpdateAnimTextures(float deltaTime);
@@ -165,6 +169,7 @@ private:
 	std::vector<AnimTexture> m_animTextures;
 	BitMatrix m_bspVis;
 	std::vector<uint8_t> m_vrm;
+	MinimapConfig m_minimapConfig;
 	Skybox m_skybox;
 	BotPath m_botPaths[3];
 

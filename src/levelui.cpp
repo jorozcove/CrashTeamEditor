@@ -12,6 +12,7 @@
 #include "ui.h"
 #include "script.h"
 #include "levdataextractor.h"
+#include "minimap.h"
 
 #include <imgui.h>
 #include <misc/cpp/imgui_stdlib.h>
@@ -364,9 +365,9 @@ bool Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, co
 				{"Explosive Crate",      ModelId::EXPLOSIVE_CRATE},
 				{"Wumpa Crate",          ModelId::FRUIT_CRATE},
 				{"Random Crate",         ModelId::RANDOM_CRATE},
-				{"Time Crate 1",         ModelId::TIME_CRATE_1},
-				{"Time Crate 2",         ModelId::TIME_CRATE_2},
-				{"Time Crate 3",         ModelId::TIME_CRATE_3},
+				{"Time Crate 1",         ModelId::STATIC_TIME_CRATE_01},
+				{"Time Crate 2",         ModelId::STATIC_TIME_CRATE_02},
+				{"Time Crate 3",         ModelId::STATIC_TIME_CRATE_03},
 				{"Poison",               ModelId::POISON},
 				{"Flame Jet",            ModelId::FLAME_JET},
 				{"Piranha Plant",        ModelId::PIRANHA_PLANT},
@@ -391,9 +392,9 @@ bool Instance::RenderUI(bool& shouldDelete, bool& shouldDuplicate, int index, co
 				{"Teeth",                ModelId::STATIC_TEETH},
 				{"Start Text",           ModelId::STATIC_STARTTEXT},
 				{"Save Object",          ModelId::STATIC_SAVEOBJ},
-				{"C Letter",             ModelId::STATIC_CTR},
-				{"T Letter",             ModelId::STATIC_CTR},
-				{"R Letter",             ModelId::STATIC_CTR}
+				{"C Letter",             ModelId::STATIC_C},
+				{"T Letter",             ModelId::STATIC_T},
+				{"R Letter",             ModelId::STATIC_R}
 			};
 
 			const char* preview = "Unknown";
@@ -1001,7 +1002,14 @@ void Level::RenderUI(Renderer& renderer)
 				{
 					m_splitLines[1] = m_rendererQueryPoint.y;
 				}
+			}
 
+			if (ImGui::TreeNode("Minimap"))
+			{
+				if (m_minimapConfig.RenderUI(m_quadblocks) && GuiRenderSettings::showMinimapBounds)
+				{
+					GenerateRenderMinimapBoundsData();
+				}
 				ImGui::TreePop();
 			}
 
@@ -1488,7 +1496,10 @@ void Level::RenderUI(Renderer& renderer)
 					if (skyboxRenderChanged & REND_FLAGS_COLUMN_0) { GenerateRenderSkyboxData(); }
 					ImGui::TableNextRow();
 					ImGui::TableSetColumnIndex(0);
-					ImGui::Checkbox("Show Instances", &GuiRenderSettings::showInstances);
+					unsigned minimapBoundsChanged = checkboxPair("Show Intances", &GuiRenderSettings::showInstances, "Show Minimap Bounds", &GuiRenderSettings::showMinimapBounds);
+
+					if (minimapBoundsChanged & REND_FLAGS_COLUMN_0) { GenerateRenderSkyboxData(); }
+					if (minimapBoundsChanged & REND_FLAGS_COLUMN_1) { GenerateRenderMinimapBoundsData(); }
 
 					ImGui::EndTable();
 				}
